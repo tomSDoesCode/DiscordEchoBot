@@ -1,17 +1,19 @@
 from typing import Optional
+from collections import defaultdict
 
 import os
+from dotenv import load_dotenv
 
 import discord
 from discord import VoiceClient
 from discord.ext.commands import Context
-from dotenv import load_dotenv
 from discord.ext import commands
-from collections import defaultdict
 import nacl
+
+from gtts import gTTS
+
 FFMPEG_EXECUTABLE = r"C:\Users\User\Documents\ffmpeg\ffmpeg-2025-06-11-git-f019dd69f0-full_build\ffmpeg-2025-06-11-git-f019dd69f0-full_build\bin\ffmpeg.exe"
-
-
+LANGUAGE = "en"
 
 def getVoiceClient(ctx : Context, bot : commands.Bot) -> Optional[VoiceClient]:
     user_vc: Optional[discord.VoiceChannel] = ctx.author.voice.channel
@@ -25,6 +27,8 @@ def main():
     #https://realpython.com/how-to-make-a-discord-bot-python/
     #https://murf.ai/blog/discord-voice-bot-api-guide
     #https://discordpy.readthedocs.io/en/stable/api.html
+    #https://www.pythondiscord.com/pages/tags/on-message-event/
+    #https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html
     userStates = defaultdict(int)
 
     #load token
@@ -115,6 +119,35 @@ def main():
 
         curr_vc.play(discord.FFmpegPCMAudio('test1.mp3', executable = FFMPEG_EXECUTABLE), after=lambda e: print('done', e))
         response = f"playing sound"
+        await ctx.send(response)
+
+    @bot.command(help="says the following sentence")
+    async def say(ctx : Context, *words):
+        print("say")
+        curr_vc : VoiceClient = getVoiceClient(ctx, bot)
+        mytext = " ".join(words)
+
+        if not curr_vc:
+            print("no voice connection")
+            response = f"I'm not in the same voice channel as you"
+            await ctx.send(response)
+            return
+        if curr_vc.is_playing():
+            print("still speaking")
+            response = f"I'm stil playing another sound"
+            await ctx.send(response)
+            return
+        if ctx.guild is None:
+            print("not in guild")
+            response = f"i'm not in a guild voice channel"
+            await ctx.send(response)
+            return
+        path = f"{ctx.guild.id}.mp3"
+        tts_obj = gTTS(text=mytext, lang=LANGUAGE, slow=False)
+        tts_obj.save(path)
+
+        curr_vc.play(discord.FFmpegPCMAudio(path, executable = FFMPEG_EXECUTABLE), after=lambda e: print('done', e))
+        response = f"saying: {mytext}"
         await ctx.send(response)
 
 
