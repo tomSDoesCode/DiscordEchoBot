@@ -102,10 +102,13 @@ def main():
         response = f"echo: {word}"
         await ctx.send(response)
 
-    @bot.command(help = "joins channel")
-    async def join(ctx : Context):
+    @bot.command(help = "joins curent channel or a given channel")
+    async def join(ctx : Context, *channels : discord.VoiceChannel):
         print("join")
-        channel : discord.VoiceChannel = ctx.author.voice.channel
+        if channels:
+            channel = channels[0]
+        else:
+            channel : discord.VoiceChannel = ctx.author.voice.channel
         if not channel:
             print("no channel")
             response = f"I failed to join the voice channel"
@@ -130,7 +133,7 @@ def main():
             response = f"I joined {channel.name}"
         await ctx.send(response)
 
-    @bot.command(help="plays the expected sound")
+    @bot.command(help="plays the funny sound")
     async def play(ctx : Context):
         print("play")
         curr_vc : VoiceClient = getVoiceClient(ctx, bot)
@@ -242,7 +245,11 @@ def main():
     @bot.command(help="leave channel")
     async def leave(ctx : Context):
         print("leave")
-        curr_vc : VoiceClient = getVoiceClient(ctx, bot)
+        curr_vc = None
+        for vc in bot.voice_clients:
+            if vc.channel.guild == ctx.guild:
+                curr_vc = vc
+                break
         if not curr_vc:
             print("no voice connection")
             response = f"I cant leave a voice channel if we aren't both in it"
