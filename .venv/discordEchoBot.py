@@ -1,6 +1,7 @@
 from discord.app_commands import Command
 from typing import Optional
 from collections import defaultdict
+from collections import deque
 
 import os
 from dotenv import load_dotenv
@@ -13,8 +14,6 @@ import nacl
 
 from gtts import gTTS
 
-FFMPEG_EXECUTABLE = r"C:\Users\User\Documents\ffmpeg\ffmpeg-2025-06-11-git-f019dd69f0-full_build\ffmpeg-2025-06-11-git-f019dd69f0-full_build\bin\ffmpeg.exe"
-LANGUAGE = "en"
 
 def getVoiceClient(ctx : Context, bot : commands.Bot) -> Optional[VoiceClient]:
     user_vc: Optional[discord.VoiceChannel] = ctx.author.voice.channel
@@ -30,11 +29,16 @@ def main():
     #https://discordpy.readthedocs.io/en/stable/api.html
     #https://www.pythondiscord.com/pages/tags/on-message-event/
     #https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html
-    userStates = defaultdict(int)
-
-    #load token
+    # load constants
     load_dotenv()
     TOKEN = os.getenv('DISCORD_TOKEN')
+    FFMPEG_EXECUTABLE = os.getenv('FFMPEG_EXECUTABLE')
+    LANGUAGE = "en"
+    MAX_MP3_PER_SERVER = 100
+
+    userStates = defaultdict(int)
+    serverMP3s = defaultdict(lambda : list((0,0)))
+    to_clean_up = []
 
     command_prefix = "!"
     #client = discord.Client()
@@ -112,9 +116,10 @@ def main():
             response = f"I failed to join the voice channel beacuse im in one"
             await ctx.send(response)
             return
-
-        vc : Optional[VoiceClient] = await channel.connect()
-        if vc is None:
+        try:
+            vc : Optional[VoiceClient] = await channel.connect(timeout = 5)
+        except TimeoutError:
+            print("timeout")
             response = f"I failed to join {channel.name}"
         else:
             response = f"I joined {channel.name}"
@@ -140,6 +145,7 @@ def main():
     async def say(ctx : Context, *words):
         print("say")
         if ctx.guild is None:
+            print("no guild")
             return
         curr_vc : VoiceClient = discord.utils.get(bot.voice_clients, guild=ctx.guild)
         mytext = " ".join(words)
@@ -149,23 +155,64 @@ def main():
             response = f"I'm not in the same voice channel as you"
             #await ctx.send(response)
             return
-        if curr_vc.is_playing():
-            print("still speaking")
-            response = f"I'm stil playing another sound"
+        
+        #warning this has potential race conditions, but as it doesnt seem to likely to occur, so i havent added locks yet
+        #TODO: add locks for serverMP3s and to_clean_up
+        #####
+        maxMP3 = serverMP3s[ctx.guild][1] = serverMP3s[ctx.guild][1] +1
+        if maxMP3 > MAX_MP3_PER_SERVER :
+            serverMP3s[ctx.guild][1] -=1
+            print("too many mp3s")
+            response = f"This server is only allowed to queue {MAX_MP3_PER_SERVER} sentences. Wait till I stop speaking to add more."
             await ctx.send(response)
             return
-        if ctx.guild is None:
-            print("not in guild")
-            response = f"i'm not in a guild voice channel"
-            await ctx.send(response)
-            return
-        path = f"{ctx.guild.id}.mp3"
+
+        path = f"{ctx.guild.id}-{maxMP3}.mp3"
+        
         tts_obj = gTTS(text=mytext, lang=LANGUAGE, slow=False)
         tts_obj.save(path)
 
-        curr_vc.play(discord.FFmpegPCMAudio(path, executable = FFMPEG_EXECUTABLE), after=lambda e: print('done', e))
-        response = f"saying: {mytext}"
-        #await ctx.send(response)
+        def cleanup(path):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    print(f"File '{path}' deleted successfully.")
+                else:
+                    print(f"File '{path}' not found.")
+            except PermissionError:
+                #if you arent allowed access to the path then note the path so it can be cleaned up later
+                to_clean_up.append(path)
+
+        def begin_playing(ctx : Context, curr_vc : Optional[VoiceClient]):
+            currentMP3, maxMP3 = serverMP3s[ctx.guild]
+            print(f"{currentMP3 = }, {maxMP3 =}")
+            # if the currentMP3 equals maxMP3 then all mp3s have been played
+            if currentMP3 >= maxMP3:
+                print("played last mp3")
+                serverMP3s[ctx.guild] = [0,0]
+                #attempt to clean up any failed cleanups then return
+                to_clean_up_cpy = to_clean_up.copy()
+                to_clean_up.clear()
+                for path in to_clean_up_cpy:
+                    cleanup(path)
+                return
+            currentMP3 = serverMP3s[ctx.guild][0] = currentMP3+1
+            path = f"{ctx.guild.id}-{currentMP3}.mp3"
+            try:
+                curr_vc.play(discord.FFmpegPCMAudio(path, executable = FFMPEG_EXECUTABLE),
+                             after = lambda e: cleanup(path) or begin_playing(ctx, curr_vc))
+            except discord.ClientException:
+                print("early leave cleanup")
+                #if the bot disconnects clean up all the mp3s and return
+                while serverMP3s[ctx.guild][0] <= serverMP3s[ctx.guild][1]:
+                    path = f"{ctx.guild.id}-{serverMP3s[ctx.guild][0]}.mp3"
+                    serverMP3s[ctx.guild][0] += 1
+                    cleanup(path)
+                return
+
+        if not curr_vc.is_playing():
+            begin_playing(ctx, curr_vc)
+        #####
 
 
     @bot.command(help="leave channel")
