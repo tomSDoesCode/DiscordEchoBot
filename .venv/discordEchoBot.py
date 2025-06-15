@@ -15,6 +15,8 @@ import nacl
 from gtts import gTTS
 
 
+
+
 def getVoiceClient(ctx : Context, bot : commands.Bot) -> Optional[VoiceClient]:
     user_vc: Optional[discord.VoiceChannel] = ctx.author.voice.channel
     if user_vc is None:
@@ -44,6 +46,9 @@ def main():
     #client = discord.Client()
     intents = discord.Intents.all()
     bot : commands.Bot = commands.Bot(command_prefix=command_prefix, intents = intents)
+
+
+
 
     #put event handlers here
     @bot.event
@@ -141,6 +146,59 @@ def main():
         response = f"playing sound"
         await ctx.send(response)
 
+    #say helper functions
+    def cleanup(path):
+        #try to delete a mp3
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                print(f"File '{path}' deleted successfully.")
+            else:
+                print(f"File '{path}' not found.")
+        except PermissionError:
+            # if you arent allowed access to the path then note the path so it can be cleaned up later
+            print("failed clean up, set to try again later")
+            to_clean_up.append(path)
+
+    def processCleanUpStack():
+        #attempt to delete the mp3s which have failed to be deleted
+        to_clean_up_cpy = to_clean_up.copy()
+        to_clean_up.clear()
+        for path in to_clean_up_cpy:
+            cleanup(path)
+        print(to_clean_up)
+
+    def begin_playing(ctx: Context, curr_vc: Optional[VoiceClient]):
+        currentMP3, maxMP3 = serverMP3s[ctx.guild]
+        print(f"{currentMP3 = }, {maxMP3 =}")
+
+        # if the currentMP3 equals maxMP3 then all mp3s have been played
+        if currentMP3 >= maxMP3:
+            print("played last mp3")
+            serverMP3s[ctx.guild] = [0, 0]  # reset servers mp3 number range
+            # attempt to clean up any failed cleanups then return
+            processCleanUpStack()
+            return
+
+        #get the next mp3 to play
+        currentMP3 = serverMP3s[ctx.guild][0] = currentMP3 + 1
+        path = f"{ctx.guild.id}-{currentMP3}.mp3"
+
+        # attempt to play the audio
+        try:
+            curr_vc.play(discord.FFmpegPCMAudio(path, executable=FFMPEG_EXECUTABLE),
+                         after=lambda e: cleanup(path) or begin_playing(ctx, curr_vc))
+        except discord.ClientException:
+            print("early leave cleanup")
+            # if the bot disconnects clean up all the mp3s and return
+            cleanup(f"{ctx.guild.id}-{currentMP3}.mp3")
+            while serverMP3s[ctx.guild][0] <= serverMP3s[ctx.guild][1]:
+                path = f"{ctx.guild.id}-{serverMP3s[ctx.guild][0]}.mp3"
+                serverMP3s[ctx.guild][0] += 1
+                cleanup(path)
+            processCleanUpStack()
+            return
+
     @bot.command(help="says the following sentence")
     async def say(ctx : Context, *words):
         print("say")
@@ -167,49 +225,15 @@ def main():
             await ctx.send(response)
             return
 
+        #generate tts and save it
         path = f"{ctx.guild.id}-{maxMP3}.mp3"
-        
+        #if the path is marked to be deleted as we are overiding it we can unmark it
+        if path in to_clean_up:
+            to_clean_up.remove(path)
         tts_obj = gTTS(text=mytext, lang=LANGUAGE, slow=False)
         tts_obj.save(path)
 
-        def cleanup(path):
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-                    print(f"File '{path}' deleted successfully.")
-                else:
-                    print(f"File '{path}' not found.")
-            except PermissionError:
-                #if you arent allowed access to the path then note the path so it can be cleaned up later
-                to_clean_up.append(path)
-
-        def begin_playing(ctx : Context, curr_vc : Optional[VoiceClient]):
-            currentMP3, maxMP3 = serverMP3s[ctx.guild]
-            print(f"{currentMP3 = }, {maxMP3 =}")
-            # if the currentMP3 equals maxMP3 then all mp3s have been played
-            if currentMP3 >= maxMP3:
-                print("played last mp3")
-                serverMP3s[ctx.guild] = [0,0]
-                #attempt to clean up any failed cleanups then return
-                to_clean_up_cpy = to_clean_up.copy()
-                to_clean_up.clear()
-                for path in to_clean_up_cpy:
-                    cleanup(path)
-                return
-            currentMP3 = serverMP3s[ctx.guild][0] = currentMP3+1
-            path = f"{ctx.guild.id}-{currentMP3}.mp3"
-            try:
-                curr_vc.play(discord.FFmpegPCMAudio(path, executable = FFMPEG_EXECUTABLE),
-                             after = lambda e: cleanup(path) or begin_playing(ctx, curr_vc))
-            except discord.ClientException:
-                print("early leave cleanup")
-                #if the bot disconnects clean up all the mp3s and return
-                while serverMP3s[ctx.guild][0] <= serverMP3s[ctx.guild][1]:
-                    path = f"{ctx.guild.id}-{serverMP3s[ctx.guild][0]}.mp3"
-                    serverMP3s[ctx.guild][0] += 1
-                    cleanup(path)
-                return
-
+        #start playing if the bot isnt already
         if not curr_vc.is_playing():
             begin_playing(ctx, curr_vc)
         #####
@@ -234,7 +258,7 @@ def main():
         if message.author == bot.user:
             print("is bot message")
             return
-        if (m := message.content) and m[0: len(command_prefix)] == command_prefix:
+        elif (m := message.content) and m[0: len(command_prefix)] == command_prefix:
             print("is command")
             return
         elif userStates[message.author] == 1:
