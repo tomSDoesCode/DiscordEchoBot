@@ -4,6 +4,7 @@ from collections import defaultdict
 from collections import deque
 
 import os
+import sys
 from dotenv import load_dotenv
 
 import discord
@@ -15,9 +16,7 @@ import nacl
 from gtts import gTTS
 
 
-
-
-def getVoiceClient(ctx : Context, bot : commands.Bot) -> Optional[VoiceClient]:
+def getVoiceClient(ctx: Context, bot: commands.Bot) -> Optional[VoiceClient]:
     user_vc: Optional[discord.VoiceChannel] = ctx.author.voice.channel
     if user_vc is None:
         print("user not in vc")
@@ -25,13 +24,24 @@ def getVoiceClient(ctx : Context, bot : commands.Bot) -> Optional[VoiceClient]:
     curr_vc: Optional[VoiceClient] = discord.utils.get(bot.voice_clients, channel=user_vc)
     return curr_vc
 
+
 def main():
-    #https://realpython.com/how-to-make-a-discord-bot-python/
-    #https://murf.ai/blog/discord-voice-bot-api-guide
-    #https://discordpy.readthedocs.io/en/stable/api.html
-    #https://www.pythondiscord.com/pages/tags/on-message-event/
-    #https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html
-    # load constants
+    # https://realpython.com/how-to-make-a-discord-bot-python/
+    # https://murf.ai/blog/discord-voice-bot-api-guide
+    # https://discordpy.readthedocs.io/en/stable/api.html
+    # https://www.pythondiscord.com/pages/tags/on-message-event/
+    # https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html
+    # https://pypi.org/project/replit-ffmpeg/
+
+
+    print(f"{sys.platform = }")
+    if sys.platform == "linux":
+        discord.opus.load_opus("opus/libopus.so")
+
+    elif sys.platform != "win32":
+        print("unsupported platform")
+        return
+
     load_dotenv()
     TOKEN = os.getenv('DISCORD_TOKEN')
     FFMPEG_EXECUTABLE = os.getenv('FFMPEG_EXECUTABLE')
@@ -39,18 +49,15 @@ def main():
     MAX_MP3_PER_SERVER = 100
 
     userStates = defaultdict(int)
-    serverMP3s = defaultdict(lambda : list((0,0)))
+    serverMP3s = defaultdict(lambda : list((0, 0)))
     to_clean_up = []
 
     command_prefix = "!"
-    #client = discord.Client()
+
     intents = discord.Intents.all()
-    bot : commands.Bot = commands.Bot(command_prefix=command_prefix, intents = intents)
+    bot: commands.Bot = commands.Bot(command_prefix=command_prefix, intents=intents)
 
-
-
-
-    #put event handlers here
+    # put event handlers here
     @bot.event
     async def on_ready():
         for guild in bot.guilds:
@@ -62,8 +69,8 @@ def main():
             f.write(f'Unhandled event: {event}\n')
             raise
 
-    @bot.command(help = "The bot starts echoing the given user in chat")
-    async def echo_register(ctx : Context, user : discord.Member):
+    @bot.command(help="The bot starts echoing the given user in chat")
+    async def echo_register(ctx: Context, user: discord.Member):
         print(f"register")
         if user is None:
             return
@@ -72,8 +79,8 @@ def main():
         response = f"{user} has been registered to echo"
         await ctx.send(response)
 
-    @bot.command(help = "The bot starts echoing the given user in vc")
-    async def say_register(ctx : Context, user : discord.Member):
+    @bot.command(help="The bot starts echoing the given user in vc")
+    async def say_register(ctx: Context, user: discord.Member):
         print(f"register")
         if user is None:
             return
@@ -85,9 +92,9 @@ def main():
             response = f"{ctx.author} is not in a vc with me. Join a vc with me to hear the regisered user"
             await ctx.send(response)
 
-    @bot.command(help = "The bot stops echoing the given user")
-    #@commands.has_role('admin') #example role check
-    async def deregister(ctx : Context, user : discord.Member):
+    @bot.command(help="The bot stops echoing the given user")
+    # @commands.has_role('admin') #example role check
+    async def deregister(ctx: Context, user: discord.Member):
         print(f"deregister")
         if user is None:
             return
@@ -96,19 +103,19 @@ def main():
         await ctx.send(response)
         # discord.utils.get(guild.channels, name=channel_name)
 
-    @bot.command(help = "echos the following word")
-    async def echo(ctx : Context, word):
+    @bot.command(help="echos the following word")
+    async def echo(ctx: Context, word):
         print(f"echo")
         response = f"echo: {word}"
         await ctx.send(response)
 
-    @bot.command(help = "joins curent channel or a given channel")
-    async def join(ctx : Context, *channels : discord.VoiceChannel):
+    @bot.command(help="joins curent channel or a given channel")
+    async def join(ctx: Context, *channels: discord.VoiceChannel):
         print("join")
         if channels:
             channel = channels[0]
         else:
-            channel : discord.VoiceChannel = ctx.author.voice.channel
+            channel: discord.VoiceChannel = ctx.author.voice.channel
         if not channel:
             print("no channel")
             response = f"I failed to join the voice channel"
@@ -125,7 +132,7 @@ def main():
             await ctx.send(response)
             return
         try:
-            vc : Optional[VoiceClient] = await channel.connect(timeout = 5)
+            vc: Optional[VoiceClient] = await channel.connect(timeout=5)
         except TimeoutError:
             print("timeout")
             response = f"I failed to join {channel.name}"
@@ -134,9 +141,9 @@ def main():
         await ctx.send(response)
 
     @bot.command(help="plays the funny sound")
-    async def play(ctx : Context):
+    async def play(ctx: Context):
         print("play")
-        curr_vc : VoiceClient = getVoiceClient(ctx, bot)
+        curr_vc: VoiceClient = getVoiceClient(ctx, bot)
 
         if not curr_vc:
             print("no voice connection")
@@ -144,14 +151,14 @@ def main():
             await ctx.send(response)
             return
 
-
-        curr_vc.play(discord.FFmpegPCMAudio('test1.mp3', executable = FFMPEG_EXECUTABLE), after=lambda e: print('done', e))
+        curr_vc.play(discord.FFmpegPCMAudio('test1.mp3', executable=FFMPEG_EXECUTABLE),
+                     after=lambda e: print('done', e))
         response = f"playing sound"
         await ctx.send(response)
 
-    #say helper functions
+    # say helper functions
     def cleanup(path):
-        #try to delete a mp3
+        # try to delete a mp3
         try:
             if os.path.exists(path):
                 os.remove(path)
@@ -164,7 +171,7 @@ def main():
             to_clean_up.append(path)
 
     def processCleanUpStack():
-        #attempt to delete the mp3s which have failed to be deleted
+        # attempt to delete the mp3s which have failed to be deleted
         to_clean_up_cpy = to_clean_up.copy()
         to_clean_up.clear()
         for path in to_clean_up_cpy:
@@ -183,7 +190,7 @@ def main():
             processCleanUpStack()
             return
 
-        #get the next mp3 to play
+        # get the next mp3 to play
         currentMP3 = serverMP3s[ctx.guild][0] = currentMP3 + 1
         path = f"{ctx.guild.id}-{currentMP3}.mp3"
 
@@ -203,47 +210,46 @@ def main():
             return
 
     @bot.command(help="says the following sentence")
-    async def say(ctx : Context, *words):
+    async def say(ctx: Context, *words):
         print("say")
         if ctx.guild is None:
             print("no guild")
             return
-        curr_vc : VoiceClient = discord.utils.get(bot.voice_clients, guild=ctx.guild)
+        curr_vc: VoiceClient = discord.utils.get(bot.voice_clients, guild=ctx.guild)
         mytext = " ".join(words)
 
         if not curr_vc:
             print("no voice connection")
             response = f"I'm not in the same voice channel as you"
-            #await ctx.send(response)
+            # await ctx.send(response)
             return
-        
-        #warning this has potential race conditions, but as it doesnt seem to likely to occur, so i havent added locks yet
-        #TODO: add locks for serverMP3s and to_clean_up
+
+        # warning this has potential race conditions, but as it doesnt seem to likely to occur, so i havent added locks yet
+        # TODO: add locks for serverMP3s and to_clean_up
         #####
-        maxMP3 = serverMP3s[ctx.guild][1] = serverMP3s[ctx.guild][1] +1
-        if maxMP3 > MAX_MP3_PER_SERVER :
-            serverMP3s[ctx.guild][1] -=1
+        maxMP3 = serverMP3s[ctx.guild][1] = serverMP3s[ctx.guild][1] + 1
+        if maxMP3 > MAX_MP3_PER_SERVER:
+            serverMP3s[ctx.guild][1] -= 1
             print("too many mp3s")
             response = f"This server is only allowed to queue {MAX_MP3_PER_SERVER} sentences. Wait till I stop speaking to add more."
             await ctx.send(response)
             return
 
-        #generate tts and save it
+        # generate tts and save it
         path = f"{ctx.guild.id}-{maxMP3}.mp3"
-        #if the path is marked to be deleted as we are overiding it we can unmark it
+        # if the path is marked to be deleted as we are overiding it we can unmark it
         if path in to_clean_up:
             to_clean_up.remove(path)
         tts_obj = gTTS(text=mytext, lang=LANGUAGE, slow=False)
         tts_obj.save(path)
 
-        #start playing if the bot isnt already
+        # start playing if the bot isnt already
         if not curr_vc.is_playing():
             begin_playing(ctx, curr_vc)
         #####
 
-
     @bot.command(help="leave channel")
-    async def leave(ctx : Context):
+    async def leave(ctx: Context):
         print("leave")
         curr_vc = None
         for vc in bot.voice_clients:
@@ -260,7 +266,7 @@ def main():
         await ctx.send(response)
 
     @bot.listen()
-    async def on_message(message : Message):
+    async def on_message(message: Message):
         print(f"{message.content = }")
         if message.author == bot.user:
             print("is bot message")
@@ -278,6 +284,7 @@ def main():
             print("not registered")
 
     bot.run(TOKEN)
+
 
 if __name__ == '__main__':
     main()
