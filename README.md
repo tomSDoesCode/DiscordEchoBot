@@ -6,4 +6,4 @@ add auto connect\
 add better user state management\
 add locks\
 setup docker image\
-refactor the say function\
+refactor the say function
