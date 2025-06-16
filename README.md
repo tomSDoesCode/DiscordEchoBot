@@ -11,3 +11,4 @@ This is the python code for hosting the Discord EchoBot. This bot is intented to
 + refactor the say function so the psuedo Context class hack can be removed
 + remove the psuedo Context class hack
 + add other voice options
++ add auto leave when the __!join__ command is used
