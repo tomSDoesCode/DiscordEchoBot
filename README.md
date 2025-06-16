@@ -1,7 +1,8 @@
 # DiscordEchoBot
-
-##TODO
+https://discord.com/oauth2/authorize?client_id=1383542849362202746
+## TODO
 add auto disconnect
+add auto connect
 add better user state management
 add locks
 setup docker image
