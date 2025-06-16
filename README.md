@@ -1,5 +1,5 @@
 # DiscordEchoBot
-https://discord.com/oauth2/authorize?client_id=1383542849362202746
+Get the Bot [here](https://discord.com/oauth2/authorize?client_id=1383542849362202746)
 ## TODO
 add auto disconnect
 add auto connect
