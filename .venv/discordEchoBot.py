@@ -76,8 +76,8 @@ def main():
             f.write(f'Unhandled event: {event}\n')
             raise
 
-    @bot.command(help="The bot toggles echoing a member")
-    async def echo_toggle(ctx: Context, member: Optional[Member]):
+    @bot.command(name= "echo_toggle", help="The bot toggles echoing a member")
+    async def echo_toggle_command(ctx: Context, member: Optional[Member]):
         print(f"echo_toggle")
         if ctx.guild is None:
             print("no guild")
@@ -97,8 +97,8 @@ def main():
         response = f"{member} has been {'' if echo_state else 'de'}registered to echo mode"
         await ctx.send(response)
 
-    @bot.command(help="The bot toggles mimicing a member with text-to-speech")
-    async def mimic_toggle(ctx: Context, member: Optional[Member]):
+    @bot.command(name = "mimic_toggle", help="The bot toggles mimicing a member with text-to-speech")
+    async def mimic_toggle_command(ctx: Context, member: Optional[Member]):
         print(f"register")
         if ctx.guild is None:
             print("no guild")
@@ -126,13 +126,13 @@ def main():
             response = f"{ctx.author} is not in a vc with me. Join a vc with me to hear the regisered user"
             await ctx.send(response)
 
-    @bot.command(help="Echos the following words")
-    async def echo(ctx: Context, *words : str):
-        await echo_helper(ctx, " ".join(words))
+    @bot.command(name = "echo", help="Echos the following words")
+    async def echo_command(ctx: Context, *words : str):
+        await echo(ctx, " ".join(words))
 
 
-    @bot.command(help="Joins current channel or a specified channel")
-    async def join(ctx: Context, channel: Optional[VoiceChannel]):
+    @bot.command(name = "join", help="Joins current channel or a specified channel")
+    async def join_command(ctx: Context, channel: Optional[VoiceChannel]):
         print("join")
         guild : Optional[Guild] = ctx.guild
 
@@ -155,10 +155,10 @@ def main():
         channel : VoiceChannel
 
         #join channel
-        await join_helper(channel, ctx)
+        await join(channel, ctx)
 
-    @bot.command(help="Mimics the following sentence in text-to-speech")
-    async def mimic(ctx: Context, *words):
+    @bot.command(name = "mimic", help="Mimics the following sentence in text-to-speech")
+    async def mimic_command(ctx: Context, *words):
         print("mimic")
         # get the guild in which the command was executed in
         if ctx.guild is None:
@@ -181,10 +181,10 @@ def main():
             return
         curr_vc : VoiceClient
         text = " ".join(words)
-        await mimic_helper(guild, ctx, curr_vc, text)
+        await mimic(guild, ctx, curr_vc, text)
 
-    @bot.command(help="Leave the channel its in")
-    async def leave(ctx: Context):
+    @bot.command(name = "leave", help="Leave the channel its in")
+    async def leave_command(ctx: Context):
         print("leave")
 
         curr_vc = get_current_voice_client(ctx.guild, bot)
@@ -194,7 +194,7 @@ def main():
             await ctx.send(response)
             return
 
-        await leave_helper(curr_vc, ctx)
+        await leave(curr_vc, ctx)
 
     @bot.listen()
     async def on_message(message: Message):
@@ -227,11 +227,11 @@ def main():
             print(f"mimicing {message.content =}")
             vc = get_current_voice_client(guild, bot)
             if vc:
-                await mimic_helper(guild, message.channel, vc,  message.content)
+                await mimic(guild, message.channel, vc,  message.content)
 
         if guild_states[guild].member_states[member].echo_member:
             print(f"echoing {message =}")
-            await echo_helper(message.channel, message.content )
+            await echo(message.channel, message.content )
 
 
 
@@ -318,7 +318,7 @@ def main():
             early_leave_cleanup(guild)
 
 
-    async def mimic_helper(guild : Guild, messagble : Messageable, curr_vc : VoiceClient, text : str):
+    async def mimic(guild : Guild, messagble : Messageable, curr_vc : VoiceClient, text : str):
         # warning this has potential race conditions, but it doesnt seem to likely to occur, so i havent added locks yet
         #####
         if guild_states[guild].last_mp3 >= MAX_MP3_PER_SERVER:
@@ -346,16 +346,16 @@ def main():
         if not curr_vc.is_playing():
             play_next_mp3(guild, curr_vc)
 
-    async def echo_helper(messagable: Messageable, text : str):
+    async def echo(messagable: Messageable, text : str):
         response = f"echo: {text}"
         await messagable.send(response)
 
     async def join_members_vc_if_None(guild : Guild, bot : Bot, member : Member, messagable : Messageable):
         if get_current_voice_client(guild, bot) is None and member.voice and isinstance(member.voice.channel, VoiceChannel):
-            await join_helper(member.voice.channel, messagable)
+            await join(member.voice.channel, messagable)
 
 
-    async def join_helper(channel: VoiceChannel, messagable: Messageable):
+    async def join(channel: VoiceChannel, messagable: Messageable):
         #get the channel in this guild that the bot is in if its in one
         curr_vc: Optional[VoiceClient] = get_current_voice_client(channel.guild, bot)
 
@@ -364,7 +364,7 @@ def main():
             if curr_vc.channel == channel :
                 print("alreadly in the vc")
                 return
-            await leave_helper(curr_vc, messagable)
+            await leave(curr_vc, messagable)
 
         # attempt to connect to the voice channel
         try:
@@ -378,7 +378,7 @@ def main():
             response = f"I joined {channel.name}"
             #await messagable.send(response)
 
-    async def leave_helper(curr_vc: VoiceClient, messagable: Messageable):
+    async def leave(curr_vc: VoiceClient, messagable: Messageable):
         await curr_vc.disconnect()
         print("i have left")
         response = f"I have left {curr_vc.channel}"
