@@ -15,6 +15,7 @@ import nacl
 
 from gtts import gTTS
 
+
 #useful links
 
 # https://realpython.com/how-to-make-a-discord-bot-python/
@@ -27,19 +28,22 @@ from gtts import gTTS
 
 
 def main():
-    print(f"{sys.platform = }")
-    if sys.platform == "linux":
-        discord.opus.load_opus("opus/libopus.so")
-
-    elif sys.platform != "win32":
-        print("unsupported platform")
-        return
 
     load_dotenv()
     TOKEN = os.getenv('DISCORD_TOKEN')
     FFMPEG_EXECUTABLE = os.getenv('FFMPEG_EXECUTABLE')
     LANGUAGE = "en"
     MAX_MP3_PER_SERVER = 100
+
+    print(f"{sys.platform = }")
+    if sys.platform == "linux":
+        OPUS = os.getenv('OPUS')
+        discord.opus.load_opus(OPUS)
+    elif sys.platform != "win32":
+        print("unsupported platform")
+        return
+
+
 
     @dataclass()
     class MemberState:
@@ -90,7 +94,7 @@ def main():
 
         #toggle the echo state and inform the user about it
         echo_state = guild_states[guild].member_states[member].echo_member = not guild_states[guild].member_states[member].echo_member
-        response = f"{member} has been {"" if echo_state else "de"}registered to echo mode"
+        response = f"{member} has been {'' if echo_state else 'de'}registered to echo mode"
         await ctx.send(response)
 
     @bot.command(help="The bot toggles mimicing a member with text-to-speech")
@@ -111,7 +115,7 @@ def main():
 
         #invet mimic_state and inform the user about it
         mimic_state = guild_states[guild].member_states[member].mimic_member = not guild_states[guild].member_states[member].mimic_member
-        response = f"{member} has been {"" if mimic_state else "de"}registered to mimic mode"
+        response = f"{member} has been {'' if mimic_state else 'de'}registered to mimic mode"
         await ctx.send(response)
 
         #auto join vc if not alreadly in one
@@ -122,12 +126,12 @@ def main():
             response = f"{ctx.author} is not in a vc with me. Join a vc with me to hear the regisered user"
             await ctx.send(response)
 
-    @bot.command(help="echos the following words")
+    @bot.command(help="Echos the following words")
     async def echo(ctx: Context, *words : str):
         await echo_helper(ctx, " ".join(words))
 
 
-    @bot.command(help="joins curent channel or a given channel")
+    @bot.command(help="Joins current channel or a specified channel")
     async def join(ctx: Context, channel: Optional[discord.VoiceChannel]):
         print("join")
         guild : Optional[discord.Guild] = ctx.guild
@@ -153,7 +157,7 @@ def main():
         #join channel
         await join_helper(channel, ctx)
 
-    @bot.command(help="mimics the following sentence in text-to-speech")
+    @bot.command(help="Mimics the following sentence in text-to-speech")
     async def mimic(ctx: Context, *words):
         print("mimic")
         # get the guild in which the command was executed in
@@ -179,7 +183,7 @@ def main():
         text = " ".join(words)
         await mimic_helper(guild, ctx, curr_vc, text)
 
-    @bot.command(help="leave channel")
+    @bot.command(help="Leave the channel its in")
     async def leave(ctx: Context):
         print("leave")
 
@@ -228,6 +232,15 @@ def main():
             vc = get_current_voice_client()
             if vc:
                 await mimic_helper(guild, message.channel, vc,  message.content)
+
+    @client.event
+    async def on_voice_state_update(member : discord.Member, before : discord.VoiceState, after: discord.VoiceState):
+        vc = get_current_voice_client(member.guild, bot)
+        if not vc:
+            return
+
+        if len(vc.channel.members) == 1:
+            await vc.disconnect()
 
 
     ###### put logic functions here
