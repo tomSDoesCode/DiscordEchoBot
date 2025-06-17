@@ -223,17 +223,19 @@ def main():
             return
         channel: TextChannel
 
+        if guild_states[guild].member_states[member].mimic_member:
+            print(f"mimicing {message.content =}")
+            vc = get_current_voice_client(guild, bot)
+            if vc:
+                await mimic_helper(guild, message.channel, vc,  message.content)
+
         if guild_states[guild].member_states[member].echo_member:
             print(f"echoing {message =}")
             await echo_helper(message.channel, message.content )
 
-        if guild_states[guild].member_states[member].mimic_member:
-            print(f"mimicing {message =}")
-            vc = get_current_voice_client()
-            if vc:
-                await mimic_helper(guild, message.channel, vc,  message.content)
 
-    @client.event
+
+    @bot.event
     async def on_voice_state_update(member : Member, before : VoiceState, after: VoiceState):
         vc = get_current_voice_client(member.guild, bot)
         if not vc:
@@ -248,10 +250,10 @@ def main():
         return discord.utils.get(bot.voice_clients, guild=guild)
 
     def get_shared_voice_client(user_vs: Optional[VoiceState], bot: Bot) -> Optional[VoiceClient]:
-        if user_vc is None:
+        if user_vs is None:
             print("user not in a vc")
             return None
-        return discord.utils.get(bot.voice_clients, channel=user_vc.channel)
+        return discord.utils.get(bot.voice_clients, channel=user_vs.channel)
 
     def cleanup(path):
         # try to delete a mp3
@@ -263,7 +265,7 @@ def main():
                 print(f"File '{path}' not found.")
         except PermissionError:
             # if you arent allowed access to the path then note the path so it can be cleaned up later
-            print("failed clean up, set to try again later")
+            print(f"File '{path}' failed clean up")
             to_clean_up.append(path)
 
     def process_cleanup_stack():
@@ -309,11 +311,15 @@ def main():
                 play_next_mp3(guild, curr_vc)
 
         # attempt to play the audio
-        curr_vc.play(discord.FFmpegPCMAudio(path, executable=FFMPEG_EXECUTABLE), after=finished_playing)
+        try:
+            curr_vc.play(discord.FFmpegPCMAudio(path, executable=FFMPEG_EXECUTABLE), after=finished_playing)
+        except discord.ClientException:
+            print("disconnected")
+            early_leave_cleanup(guild)
 
 
     async def mimic_helper(guild : Guild, messagble : Messageable, curr_vc : VoiceClient, text : str):
-        # warning this has potential race conditions, but as it doesnt seem to likely to occur, so i havent added locks yet
+        # warning this has potential race conditions, but it doesnt seem to likely to occur, so i havent added locks yet
         #####
         if guild_states[guild].last_mp3 >= MAX_MP3_PER_SERVER:
             print("too many mp3s")
@@ -325,8 +331,10 @@ def main():
 
         #get path which the new mp3 will be saved to
         path = f"{guild.id}-{last_mp3}.mp3"
-        # if the path is marked to be deleted as we are overiding it we can unmark it
+
+        #as failed cleanups are excpected to be rare, searching in the list should have minimal impact
         if path in to_clean_up:
+            # if the path is marked to be deleted as we are overiding it we can unmark it
             to_clean_up.remove(path)
 
         #generate and save text-to-speech mp3
