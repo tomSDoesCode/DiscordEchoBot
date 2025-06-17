@@ -6,7 +6,7 @@ This is the python code for hosting the Discord EchoBot. This bot is intented to
 + add auto disconnect when alone in a voice channel
 + ~add auto connect when a command to play a sound is run by a user in a voice channel~
 + ~change how user state is managed so each users state is independent from their state in another server~
-+ add locks to prevent race conditions
++ ~add locks to prevent race conditions~
 + setup docker image
 + ~refactor the say function so the psuedo Context class hack can be removed~
 + ~remove the psuedo Context class hack~
