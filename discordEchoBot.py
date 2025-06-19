@@ -10,10 +10,9 @@ import discord
 from discord import VoiceClient, Message, TextChannel, Member, Guild, VoiceChannel, VoiceState, StageChannel
 from discord.abc import Messageable
 from discord.ext.commands import Context, Bot
-import nacl
+#import nacl #doesn't need to be imported but needs to be installed
 
 from gtts import gTTS
-
 
 #useful links
 # https://realpython.com/how-to-make-a-discord-bot-python/
@@ -22,8 +21,6 @@ from gtts import gTTS
 # https://www.pythondiscord.com/pages/tags/on-message-event/
 # https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html
 # https://pypi.org/project/replit-ffmpeg/
-
-
 
 def main():
 
@@ -40,8 +37,6 @@ def main():
     elif sys.platform != "win32":
         print("unsupported platform")
         return
-
-
 
     @dataclass()
     class MemberState:
@@ -88,12 +83,8 @@ def main():
         if not isinstance(member, Member):
             print("user not in server")
             return
-        member : Member
 
-        #toggle the echo state and inform the user about it
-        echo_state = guild_states[guild].member_states[member].echo_member = not guild_states[guild].member_states[member].echo_member
-        response = f"{member} has been {'' if echo_state else 'de'}registered to echo mode"
-        await ctx.send(response)
+        await echo_toggle(ctx, guild, member)
 
     @bot.command(name = "mimic_toggle", help="The bot toggles mimicking a member with text-to-speech")
     async def mimic_toggle_command(ctx: Context, member: Optional[Member]):
@@ -109,25 +100,80 @@ def main():
         if not isinstance(member, Member):
             print("user not in server")
             return
-        member : Member
 
-        #invet mimic_state and inform the user about it
-        mimic_state = guild_states[guild].member_states[member].mimic_member = not guild_states[guild].member_states[member].mimic_member
-        response = f"{member} has been {'' if mimic_state else 'de'}registered to mimic mode"
+        await mimic_toggle(ctx, guild, member)
+
+        await auto_join(ctx, guild, member)
+
+    @bot.command(name = "mimic_all", help = "Set the bot to mimic all users in this server")
+    async def mimic_all_command(ctx: Context):
+        guild : Guild = ctx.guild
+        if not guild:
+            print("no guild")
+            return
+
+        for member in guild.members:
+            if member != bot.user:
+                guild_states[guild].member_states[member].mimic_member = True
+        response = f"all members set to be mimicked"
+
         await ctx.send(response)
 
-        #auto join vc if not already in one
-        await join_members_vc_if_none(guild, bot, member, ctx)
+        member = ctx.author
+        if not isinstance(member, Member):
+            print("user not in server")
+            return
 
-        # tell the person who activated the command to join a vc with the bot if not already
-        if get_shared_voice_client(ctx.author.voice, bot) is None:
-            response = f"{ctx.author} is not in a vc with me. Join a vc with me to hear the registered user"
-            await ctx.send(response)
+        await auto_join(ctx, guild, member)
+
+    @bot.command(name = "mimic_none", help = "Set the bot to mimic no users in this server")
+    async def mimic_none_command(ctx: Context):
+        guild: Guild = ctx.guild
+        if not guild:
+            print("no guild")
+            return
+
+        for member in guild.members:
+            guild_states[guild].member_states[member].mimic_member = False
+        response = f"all members set to not be mimicked"
+        await ctx.send(response)
+
+    @bot.command(name = "mimic_role", help = "Set the bot to mimic members of a given role in this server")
+    async def mimic_role_command(ctx: Context, role : discord.Role):
+        guild: Guild = ctx.guild
+        if not guild:
+            print("no guild")
+            return
+
+        for member in guild.members:
+            if role in member.roles and member != bot.user:
+                guild_states[guild].member_states[member].mimic_member = True
+        response = f"all members of role {role} set to be mimicked"
+        await ctx.send(response)
+
+        member = ctx.author
+        if not isinstance(member, Member):
+            print("user not in server")
+            return
+
+        await auto_join(ctx, guild, member)
+
+    @bot.command(name = "stop_mimic_role", help = "Set the bot to not mimic members of a given role in this server")
+    async def stop_mimic_role_command(ctx: Context, role : discord.Role):
+        guild: Guild = ctx.guild
+        if not guild:
+            print("no guild")
+            return
+
+        for member in guild.members:
+            if role in member.roles:
+                guild_states[guild].member_states[member].mimic_member = False
+        response = f"all members of role {role} set to not be mimicked"
+        await ctx.send(response)
 
     @bot.command(name = "echo", help="Echos the following words")
     async def echo_command(ctx: Context, *words : str):
         await echo(ctx, " ".join(words))
-
 
     @bot.command(name = "join", help="Joins current channel or a specified channel")
     async def join_command(ctx: Context, channel: Optional[VoiceChannel]):
@@ -181,6 +227,34 @@ def main():
         text = " ".join(words)
         await mimic(guild, ctx, curr_vc, text)
 
+    @bot.command(name = "mimic_file", help="Mimics the following file in text-to-speech")
+    async def mimic_command(ctx: Context, *words):
+        print("mimic")
+        # get the guild in which the command was executed in
+        if ctx.guild is None:
+            print("not in guild")
+            return
+        guild: Guild = ctx.guild
+
+        #get the member who did the command
+        if not isinstance(ctx.author, Member):
+            print("not member")
+            return
+        member : Member = ctx.author
+
+        #if the bot isn't in a vc on this server join th
+        await join_members_vc_if_none(guild, bot, member, ctx)
+
+        curr_vc = get_current_voice_client(guild, bot)
+        if curr_vc is None:
+            print("not in vc")
+            return
+        curr_vc : VoiceClient
+        text = " ".join(words)
+        await mimic(guild, ctx, curr_vc, text)
+
+
+
     @bot.command(name = "leave", help="Leave the channel its in")
     async def leave_command(ctx: Context):
         print("leave")
@@ -231,8 +305,6 @@ def main():
             print(f"echoing {message =}")
             await echo(channel, message.content )
 
-
-
     @bot.event
     async def on_voice_state_update(member : Member, before : VoiceState, after: VoiceState):
         vc = get_current_voice_client(member.guild, bot)
@@ -280,7 +352,10 @@ def main():
             path = f"{guild.id}-{current_mp3}.mp3"
             guild_states[guild].current_mp3 += 1
             cleanup(path)
+        guild_states[guild].current_mp3 = 0
+        guild_states[guild].last_mp3 = 0
         process_cleanup_stack()
+
 
     def play_next_mp3(guild: Guild, curr_vc: VoiceClient):
         prev_mp3 = guild_states[guild].current_mp3
@@ -314,9 +389,14 @@ def main():
         except discord.ClientException:
             print("disconnected")
             early_leave_cleanup(guild)
+        print(f"currMP3 = {guild_states[guild].current_mp3}, lastMP3 = {guild_states[guild].last_mp3}")
 
 
     async def mimic(guild : Guild, messageable : Messageable, curr_vc : VoiceClient, text : str):
+        if text == "":
+            print("no text")
+            return
+
         # warning this has potential race conditions, but it doesn't seem likely to occur, so I haven't added locks yet
         #####
         if guild_states[guild].last_mp3 >= MAX_MP3_PER_SERVER:
@@ -335,6 +415,7 @@ def main():
             # if the path is marked to be deleted as we are overriding it we can unmark it
             to_clean_up.remove(path)
 
+
         #generate and save text-to-speech mp3
         tts_obj = gTTS(text=text, lang=LANGUAGE, slow=False)
         tts_obj.save(path)
@@ -343,6 +424,28 @@ def main():
         # start playing if the bot isn't already
         if not curr_vc.is_playing():
             play_next_mp3(guild, curr_vc)
+
+    async def auto_join(messageable : Messageable, guild : Guild, member : Member):
+        # auto join vc if not already in one
+        await join_members_vc_if_none(guild, bot, member, messageable)
+        # tell the person who activated the command to join a vc with the bot if not already
+        if get_shared_voice_client(member.voice, bot) is None:
+            response = f"{member} is not in a vc with me. Join a vc with me to hear the registered user"
+            await messageable.send(response)
+
+    async def echo_toggle(messageable : Messageable, guild : Guild, member : Member):
+        # toggle the echo state and inform the user about it
+        echo_state = guild_states[guild].member_states[member].echo_member = not guild_states[guild].member_states[
+            member].echo_member
+        response = f"{member} has been {'' if echo_state else 'de'}registered to echo mode"
+        await messageable.send(response)
+
+    async def mimic_toggle(messageable : Messageable, guild : Guild, member : Member):
+        # invert mimic_state and inform the user about it
+        mimic_state = guild_states[guild].member_states[member].mimic_member = not guild_states[guild].member_states[
+            member].mimic_member
+        response = f"{member} has been {'' if mimic_state else 'de'}registered to mimic mode"
+        await messageable.send(response)
 
     async def echo(messageable: Messageable, text : str):
         response = f"echo: {text}"
