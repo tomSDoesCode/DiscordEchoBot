@@ -12,3 +12,4 @@ This is the python code for hosting the Discord EchoBot. This bot is intented to
 + ~remove the psuedo Context class hack~
 + add other voice options
 + ~add auto leave when the __!join__ command is used~
++ add better logging of events
