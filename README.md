@@ -8,8 +8,7 @@ This is the python code for hosting the Discord EchoBot. This bot is intented to
 + ~change how user state is managed so each users state is independent from their state in another server~
 + add locks to prevent race conditions
 + setup docker image
-+ ~refactor the say function so the psuedo Context class hack can be removed~
-+ ~remove the psuedo Context class hack~
++ ~seperate the triggering of commands and the execution of commands into different functions~
 + add other voice options
 + ~add auto leave when the __!join__ command is used~
 + add better logging of events
