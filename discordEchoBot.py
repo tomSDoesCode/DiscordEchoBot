@@ -7,9 +7,8 @@ import sys
 from dotenv import load_dotenv
 
 import discord
-from discord import VoiceClient, Message, TextChannel, Member, Guild, VoiceChannel, VoiceState
+from discord import VoiceClient, Message, TextChannel, Member, Guild, VoiceChannel, VoiceState, StageChannel
 from discord.abc import Messageable
-from discord.ext import commands
 from discord.ext.commands import Context, Bot
 import nacl
 
@@ -17,7 +16,6 @@ from gtts import gTTS
 
 
 #useful links
-
 # https://realpython.com/how-to-make-a-discord-bot-python/
 # https://murf.ai/blog/discord-voice-bot-api-guide
 # https://discordpy.readthedocs.io/en/stable/api.html
@@ -97,7 +95,7 @@ def main():
         response = f"{member} has been {'' if echo_state else 'de'}registered to echo mode"
         await ctx.send(response)
 
-    @bot.command(name = "mimic_toggle", help="The bot toggles mimicing a member with text-to-speech")
+    @bot.command(name = "mimic_toggle", help="The bot toggles mimicking a member with text-to-speech")
     async def mimic_toggle_command(ctx: Context, member: Optional[Member]):
         print(f"register")
         if ctx.guild is None:
@@ -118,12 +116,12 @@ def main():
         response = f"{member} has been {'' if mimic_state else 'de'}registered to mimic mode"
         await ctx.send(response)
 
-        #auto join vc if not alreadly in one
-        await join_members_vc_if_None(guild, bot, member, ctx )
+        #auto join vc if not already in one
+        await join_members_vc_if_none(guild, bot, member, ctx)
 
-        # tell the person who activated the command to join a vc with the bot if not alreadly
+        # tell the person who activated the command to join a vc with the bot if not already
         if get_shared_voice_client(ctx.author.voice, bot) is None:
-            response = f"{ctx.author} is not in a vc with me. Join a vc with me to hear the regisered user"
+            response = f"{ctx.author} is not in a vc with me. Join a vc with me to hear the registered user"
             await ctx.send(response)
 
     @bot.command(name = "echo", help="Echos the following words")
@@ -136,12 +134,12 @@ def main():
         print("join")
         guild : Optional[Guild] = ctx.guild
 
-        # if the user didnt give a channel, try and get the channel theyr'e in
+        # if the user didn't give a channel, try and get the channel they're in
         if not channel:
             voice: Optional[VoiceState] = ctx.author.voice
             if not voice:
                 print("no voice state")
-                response = f"I failed to join the voice channel because you are not in one to join and you didnt provide one to join"
+                response = f"I failed to join the voice channel because you are not in one to join and you didn't provide one to join"
                 await ctx.send(response)
                 return
             channel : Optional[VoiceChannel] | StageChannel = voice.channel
@@ -149,7 +147,7 @@ def main():
         #check that the channel exists and is in the guild they put the command in
         if not isinstance(channel, VoiceChannel) or channel.guild != guild:
             print("no voice Channel")
-            response = f"I failed to join the voice channel because you are not in one to join and you didnt provide one to join"
+            response = f"I failed to join the voice channel because you are not in one to join and you didn't provide one to join"
             await ctx.send(response)
             return
         channel : VoiceChannel
@@ -172,8 +170,8 @@ def main():
             return
         member : Member = ctx.author
 
-        #if the bot isnt in a vc on this server join th
-        await join_members_vc_if_None(guild, bot, member, ctx)
+        #if the bot isn't in a vc on this server join th
+        await join_members_vc_if_none(guild, bot, member, ctx)
 
         curr_vc = get_current_voice_client(guild, bot)
         if curr_vc is None:
@@ -194,7 +192,7 @@ def main():
             await ctx.send(response)
             return
 
-        await leave(curr_vc, ctx)
+        await leave(curr_vc)
 
     @bot.listen()
     async def on_message(message: Message):
@@ -213,25 +211,25 @@ def main():
             # print("is bot message")
             return
 
-        # check if the message a command so it can be ignored by this function
+        # check if the message is a command so it can be ignored by this function
         if (m := message.content) and m[0: len(command_prefix)] == command_prefix:
             # print("is command")
             return
 
-        # if the channel isnt a text channel then we ignore the message
+        # if the channel isn't a text channel then we ignore the message
         if not isinstance((channel := message.channel), TextChannel):
             return
         channel: TextChannel
 
         if guild_states[guild].member_states[member].mimic_member:
-            print(f"mimicing {message.content =}")
+            print(f"mimicking {message.content =}")
             vc = get_current_voice_client(guild, bot)
             if vc:
-                await mimic(guild, message.channel, vc,  message.content)
+                await mimic(guild, channel, vc,  message.content)
 
         if guild_states[guild].member_states[member].echo_member:
             print(f"echoing {message =}")
-            await echo(message.channel, message.content )
+            await echo(channel, message.content )
 
 
 
@@ -242,7 +240,7 @@ def main():
             return
 
         if len(vc.channel.members) == 1:
-            await vc.disconnect()
+            await leave(vc)
 
 
     ###### put logic functions here
@@ -264,7 +262,7 @@ def main():
             else:
                 print(f"File '{path}' not found.")
         except PermissionError:
-            # if you arent allowed access to the path then note the path so it can be cleaned up later
+            # if you aren't allowed access to the path then note the path so it can be cleaned up later
             print(f"File '{path}' failed clean up")
             to_clean_up.append(path)
 
@@ -318,13 +316,13 @@ def main():
             early_leave_cleanup(guild)
 
 
-    async def mimic(guild : Guild, messagble : Messageable, curr_vc : VoiceClient, text : str):
-        # warning this has potential race conditions, but it doesnt seem to likely to occur, so i havent added locks yet
+    async def mimic(guild : Guild, messageable : Messageable, curr_vc : VoiceClient, text : str):
+        # warning this has potential race conditions, but it doesn't seem likely to occur, so I haven't added locks yet
         #####
         if guild_states[guild].last_mp3 >= MAX_MP3_PER_SERVER:
             print("too many mp3s")
             response = f"This server is only allowed to queue {MAX_MP3_PER_SERVER} sentences. Wait till I stop speaking to add more."
-            await messagble.send(response)
+            await messageable.send(response)
             return
 
         last_mp3 = guild_states[guild].last_mp3 = guild_states[guild].last_mp3 + 1
@@ -332,9 +330,9 @@ def main():
         #get path which the new mp3 will be saved to
         path = f"{guild.id}-{last_mp3}.mp3"
 
-        #as failed cleanups are excpected to be rare, searching in the list should have minimal impact
+        #as failed cleanups are expected to be rare, searching in the list should have minimal impact
         if path in to_clean_up:
-            # if the path is marked to be deleted as we are overiding it we can unmark it
+            # if the path is marked to be deleted as we are overriding it we can unmark it
             to_clean_up.remove(path)
 
         #generate and save text-to-speech mp3
@@ -342,47 +340,44 @@ def main():
         tts_obj.save(path)
         #####
 
-        # start playing if the bot isnt already
+        # start playing if the bot isn't already
         if not curr_vc.is_playing():
             play_next_mp3(guild, curr_vc)
 
-    async def echo(messagable: Messageable, text : str):
+    async def echo(messageable: Messageable, text : str):
         response = f"echo: {text}"
-        await messagable.send(response)
+        await messageable.send(response)
 
-    async def join_members_vc_if_None(guild : Guild, bot : Bot, member : Member, messagable : Messageable):
+    async def join_members_vc_if_none(guild : Guild, bot : Bot, member : Member, messageable : Messageable):
         if get_current_voice_client(guild, bot) is None and member.voice and isinstance(member.voice.channel, VoiceChannel):
-            await join(member.voice.channel, messagable)
+            await join(member.voice.channel, messageable)
 
 
-    async def join(channel: VoiceChannel, messagable: Messageable):
+    async def join(channel: VoiceChannel, messageable: Messageable):
         #get the channel in this guild that the bot is in if its in one
         curr_vc: Optional[VoiceClient] = get_current_voice_client(channel.guild, bot)
 
         #if already in a vc, but not the one the user is in then we leave it so we can join their vc
         if curr_vc is not None:
             if curr_vc.channel == channel :
-                print("alreadly in the vc")
+                print("already in the vc")
                 return
-            await leave(curr_vc, messagable)
+            await leave(curr_vc)
 
         # attempt to connect to the voice channel
         try:
-            vc: Optional[VoiceClient] = await channel.connect(timeout=5)
+            await channel.connect(timeout=5)
         except TimeoutError:
             print("timeout")
             response = f"I failed to join {channel.name}"
-            await messagable.send(response)
+            await messageable.send(response)
         else:
             print("joined")
-            response = f"I joined {channel.name}"
-            #await messagable.send(response)
 
-    async def leave(curr_vc: VoiceClient, messagable: Messageable):
+
+    async def leave(curr_vc: VoiceClient):
         await curr_vc.disconnect()
         print("i have left")
-        response = f"I have left {curr_vc.channel}"
-        #await messagable.send(response)
 
     bot.run(TOKEN)
 
