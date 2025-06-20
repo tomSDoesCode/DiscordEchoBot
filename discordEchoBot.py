@@ -190,7 +190,7 @@ def main():
                 return
             channel : Optional[VoiceChannel] | StageChannel = voice.channel
 
-        #check that the channel exists and is in the guild they put the command in
+        #check that the channel exists and is in the guild the user put the command in
         if not isinstance(channel, VoiceChannel) or channel.guild != guild:
             print("no voice Channel")
             response = f"I failed to join the voice channel because you are not in one to join and you didn't provide one to join"
@@ -198,7 +198,6 @@ def main():
             return
         channel : VoiceChannel
 
-        #join channel
         await join(channel, ctx)
 
     @bot.command(name = "mimic", help="Mimics the following sentence in text-to-speech")
@@ -218,11 +217,13 @@ def main():
 
         await auto_join(ctx, guild, member)
 
+        #get voice client of the bot
         curr_vc = get_current_voice_client(guild, bot)
         if curr_vc is None:
             print("not in vc")
             return
         curr_vc : VoiceClient
+
         text = " ".join(words)
         await mimic(guild, ctx, curr_vc, text)
 
@@ -230,6 +231,7 @@ def main():
     async def leave_command(ctx: Context):
         print("leave")
 
+        # get voice client of the bot
         curr_vc = get_current_voice_client(ctx.guild, bot)
         if not curr_vc:
             print("no voice connection")
@@ -285,11 +287,12 @@ def main():
         if len(vc.channel.members) == 1:
             await leave(vc)
 
-
     ###### put logic functions here
+    #get the current voice client of the bot
     def get_current_voice_client(guild : Guild, bot: Bot) -> Optional[VoiceClient]:
         return discord.utils.get(bot.voice_clients, guild=guild)
 
+    #get the voice client of the bot if it's in the passed in voice states channel
     def get_shared_voice_client(user_vs: Optional[VoiceState], bot: Bot) -> Optional[VoiceClient]:
         if user_vs is None:
             print("user not in a vc")
@@ -317,7 +320,7 @@ def main():
             cleanup(path)
         print(to_clean_up)
 
-    def early_leave_cleanup(guild: Guild):
+    def end_of_playing_cleanup(guild: Guild):
         print("early leave cleanup")
         while (current_mp3 := guild_states[guild].current_mp3) <= guild_states[guild].last_mp3:
             path = f"{guild.id}-{current_mp3}.mp3"
@@ -327,30 +330,24 @@ def main():
         guild_states[guild].last_mp3 = 0
         process_cleanup_stack()
 
-
     def play_next_mp3(guild: Guild, curr_vc: VoiceClient):
-        prev_mp3 = guild_states[guild].current_mp3
+        current_mp3 = guild_states[guild].current_mp3 = guild_states[guild].current_mp3 + 1
         last_mp3 = guild_states[guild].last_mp3
 
         # if the prev_mp3 equals last_mp3 then all mp3s have been played
-        if prev_mp3 >= last_mp3:
+        if current_mp3 > last_mp3:
             print("played last mp3")
-            guild_states[guild].current_mp3 = 0
-            guild_states[guild].last_mp3 = 0
-
-            # attempt to clean up any failed cleanups then return
-            process_cleanup_stack()
+            end_of_playing_cleanup(guild)
             return
 
-        # get the next mp3 to play
-        current_mp3 = guild_states[guild].current_mp3 = prev_mp3 + 1
+        # get the next mp3 to plays path
         path = f"{guild.id}-{current_mp3}.mp3"
 
         def finished_playing(e : Optional[Exception]):
             cleanup(path)
             if e:
                 print(f"Error when playing audio: {e}")
-                early_leave_cleanup(guild)
+                end_of_playing_cleanup(guild)
             else:
                 play_next_mp3(guild, curr_vc)
 
@@ -359,9 +356,8 @@ def main():
             curr_vc.play(discord.FFmpegPCMAudio(path, executable=FFMPEG_EXECUTABLE), after=finished_playing)
         except discord.ClientException:
             print("disconnected")
-            early_leave_cleanup(guild)
+            end_of_playing_cleanup(guild)
         print(f"currMP3 = {guild_states[guild].current_mp3}, lastMP3 = {guild_states[guild].last_mp3}")
-
 
     async def mimic(guild : Guild, messageable : Messageable, curr_vc : VoiceClient, text : str):
         if text == "":
@@ -385,7 +381,6 @@ def main():
         if path in to_clean_up:
             # if the path is marked to be deleted as we are overriding it we can unmark it
             to_clean_up.remove(path)
-
 
         #generate and save text-to-speech mp3
         tts_obj = gTTS(text=text, lang=LANGUAGE, slow=False)
@@ -426,7 +421,6 @@ def main():
         if get_current_voice_client(guild, bot) is None and member.voice and isinstance(member.voice.channel, VoiceChannel):
             await join(member.voice.channel, messageable)
 
-
     async def join(channel: VoiceChannel, messageable: Messageable):
         #get the channel in this guild that the bot is in if its in one
         curr_vc: Optional[VoiceClient] = get_current_voice_client(channel.guild, bot)
@@ -448,13 +442,11 @@ def main():
         else:
             print("joined")
 
-
     async def leave(curr_vc: VoiceClient):
         await curr_vc.disconnect()
         print("i have left")
 
     bot.run(TOKEN)
-
 
 if __name__ == '__main__':
     main()
