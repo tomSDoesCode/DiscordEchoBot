@@ -216,8 +216,7 @@ def main():
             return
         member : Member = ctx.author
 
-        #if the bot isn't in a vc on this server join th
-        await join_members_vc_if_none(guild, bot, member, ctx)
+        await auto_join(ctx, guild, member)
 
         curr_vc = get_current_voice_client(guild, bot)
         if curr_vc is None:
@@ -226,34 +225,6 @@ def main():
         curr_vc : VoiceClient
         text = " ".join(words)
         await mimic(guild, ctx, curr_vc, text)
-
-    @bot.command(name = "mimic_file", help="Mimics the following file in text-to-speech")
-    async def mimic_command(ctx: Context, *words):
-        print("mimic")
-        # get the guild in which the command was executed in
-        if ctx.guild is None:
-            print("not in guild")
-            return
-        guild: Guild = ctx.guild
-
-        #get the member who did the command
-        if not isinstance(ctx.author, Member):
-            print("not member")
-            return
-        member : Member = ctx.author
-
-        #if the bot isn't in a vc on this server join th
-        await join_members_vc_if_none(guild, bot, member, ctx)
-
-        curr_vc = get_current_voice_client(guild, bot)
-        if curr_vc is None:
-            print("not in vc")
-            return
-        curr_vc : VoiceClient
-        text = " ".join(words)
-        await mimic(guild, ctx, curr_vc, text)
-
-
 
     @bot.command(name = "leave", help="Leave the channel its in")
     async def leave_command(ctx: Context):
