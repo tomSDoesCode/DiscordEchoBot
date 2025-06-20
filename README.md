@@ -4,7 +4,7 @@ Get the bot [here](https://discord.com/oauth2/authorize?client_id=13835428493622
 This is the python code for hosting the Discord EchoBot.\
 This bot is intented to be added to a server and have the members can use the __!mimic_toggle__ command which will take a member of the server or them by default to add set the subject member to be mimicked.\
 Once one or more members have been registered and the bot is in a voice channel, which can be done either by using the __!join__ command or automatically when the __!mimic_toggle__ command is used while the member who used the command is in a voice channel, the bot will play text-to-speech of any message (except commands) put into and text channel the bot has access to.\
-Finaly when the user is done with the bot it will either leave it's voice channel automatically when its alone in a voice channel or can be made to leave using the __!leave__ command.
+Finally when the user is done with the bot it will either leave it's voice channel automatically when its alone in a voice channel or can be made to leave using the __!leave__ command.
 ## TODO list
 + ~add auto disconnect when alone in a voice channel~
 + ~add auto connect when a command to play a sound is run by a user in a voice channel~
