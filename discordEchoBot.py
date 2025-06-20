@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from typing import Optional
 from collections import defaultdict
 from dataclasses import dataclass, field
