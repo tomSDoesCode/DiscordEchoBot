@@ -28,15 +28,20 @@ def main():
 
     load_dotenv()
     TOKEN = os.getenv('DISCORD_TOKEN')
-    FFMPEG_EXECUTABLE = os.getenv('FFMPEG_EXECUTABLE')
+
     LANGUAGE = "en"
     MAX_MP3_PER_SERVER = 100
 
     print(f"{sys.platform = }")
     if sys.platform == "linux":
-        OPUS = os.getenv('OPUS')
+        FFMPEG_EXECUTABLE = r"/bin/ffmpeg"
+        OPUS = r"/usr/lib/x86_64-linux-gnu/libopus.so.0"
         discord.opus.load_opus(OPUS)
-    elif sys.platform != "win32":
+        MP3DIR = r"mp3s/"
+    elif sys.platform == "win32":
+        FFMPEG_EXECUTABLE = os.getenv('FFMPEG_EXECUTABLE')
+        MP3DIR = r"mp3s/"
+    else:
         print("unsupported platform")
         return
 
@@ -301,33 +306,34 @@ def main():
             return None
         return discord.utils.get(bot.voice_clients, channel=user_vs.channel)
 
-    def cleanup(path):
+    def cleanup(file_name):
         # try to delete a mp3
+        path = f"{MP3DIR}{file_name}"
         try:
             if os.path.exists(path):
                 os.remove(path)
-                print(f"File '{path}' deleted successfully.")
+                print(f"File '{file_name}' deleted successfully.")
             else:
-                print(f"File '{path}' not found.")
+                print(f"File '{file_name}' not found.")
         except PermissionError:
-            # if you aren't allowed access to the path then note the path so it can be cleaned up later
-            print(f"File '{path}' failed clean up")
-            to_clean_up.append(path)
+            # if you aren't allowed access to the file then note the file so it can be cleaned up later
+            print(f"File '{file_name}' failed clean up")
+            to_clean_up.append(file_name)
 
     def process_cleanup_stack():
         # attempt to delete the mp3s which have failed to be deleted in cleanup
         to_clean_up_cpy = to_clean_up.copy()
         to_clean_up.clear()
-        for path in to_clean_up_cpy:
-            cleanup(path)
+        for file_name in to_clean_up_cpy:
+            cleanup(file_name)
         print(to_clean_up)
 
     def end_of_playing_cleanup(guild: Guild):
         print("early leave cleanup")
         while (current_mp3 := guild_states[guild].current_mp3) <= guild_states[guild].last_mp3:
-            path = f"{guild.id}-{current_mp3}.mp3"
+            file_name = f"{guild.id}-{current_mp3}.mp3"
             guild_states[guild].current_mp3 += 1
-            cleanup(path)
+            cleanup(file_name)
         guild_states[guild].current_mp3 = 0
         guild_states[guild].last_mp3 = 0
         process_cleanup_stack()
@@ -342,11 +348,11 @@ def main():
             end_of_playing_cleanup(guild)
             return
 
-        # get the next mp3 to plays path
-        path = f"{guild.id}-{current_mp3}.mp3"
+        # get the next mp3 to plays file name
+        file_name = f"{guild.id}-{current_mp3}.mp3"
 
         def finished_playing(e : Optional[Exception]):
-            cleanup(path)
+            cleanup(file_name)
             if e:
                 print(f"Error when playing audio: {e}")
                 end_of_playing_cleanup(guild)
@@ -354,6 +360,7 @@ def main():
                 play_next_mp3(guild, curr_vc)
 
         # attempt to play the audio
+        path = f"{MP3DIR}{file_name}"
         try:
             curr_vc.play(discord.FFmpegPCMAudio(path, executable=FFMPEG_EXECUTABLE), after=finished_playing)
         except discord.ClientException:
@@ -376,14 +383,15 @@ def main():
 
         last_mp3 = guild_states[guild].last_mp3 = guild_states[guild].last_mp3 + 1
 
-        #get path which the new mp3 will be saved to
-        path = f"{guild.id}-{last_mp3}.mp3"
+        #makes the file name of the new mp3
+        file_name = f"{guild.id}-{last_mp3}.mp3"
 
         #as failed cleanups are expected to be rare, searching in the list should have minimal impact
-        if path in to_clean_up:
-            # if the path is marked to be deleted as we are overriding it we can unmark it
-            to_clean_up.remove(path)
+        if file_name in to_clean_up:
+            # if the file_name is marked to be deleted as we are overriding it we can unmark it
+            to_clean_up.remove(file_name)
 
+        path = f"{MP3DIR}{file_name}"
         #generate and save text-to-speech mp3
         tts_obj = gTTS(text=text, lang=LANGUAGE, slow=False)
         tts_obj.save(path)
