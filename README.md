@@ -14,4 +14,4 @@ Finally when the user is done with the bot it will either leave it's voice chann
 + ~seperate the triggering of commands and the execution of commands into different functions~
 + add other voice options
 + ~add auto leave when the __!join__ command is used~
-+ add better logging of events
++ ~add better logging of events~
