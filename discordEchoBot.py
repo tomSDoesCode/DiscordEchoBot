@@ -20,6 +20,8 @@ import logging
 
 import traceback
 
+import threading
+
 #useful links
 # https://realpython.com/how-to-make-a-discord-bot-python/
 # https://murf.ai/blog/discord-voice-bot-api-guide
@@ -70,12 +72,18 @@ def main():
         current_mp3 : int = 0
         #represents the last mp3 which needs to be played 0 being no mp3s need to be played
         last_mp3 : int = 0
+        mp3_lock : threading.Lock = field(default_factory=lambda : threading.Lock())
+
 
     guild_states : defaultdict[Guild,GuildState] = defaultdict(GuildState)
+
+
 
     #list of a mp3 file names of file which failed to be deleted,
     # hence need to be deleted at a later point
     to_clean_up = []
+    #lock to use the cleanup list
+    cleanup_lock: threading.Lock = threading.Lock()
 
     command_prefix = "!"
 
@@ -283,7 +291,7 @@ def main():
             return None
         return discord.utils.get(bot.voice_clients, channel=user_vs.channel)
 
-    def cleanup(file_name):
+    def cleanup(file_name, lock_overide = False):
         # try to delete a mp3
         path = f"{MP3DIR}{file_name}"
         try:
@@ -295,33 +303,43 @@ def main():
         except PermissionError:
             # if you aren't allowed access to the file then note the file so it can be cleaned up later
             logger.info(f"File '{file_name}' failed clean up")
-            to_clean_up.append(file_name)
+            with cleanup_lock:
+                to_clean_up.append(file_name)
 
     def process_cleanup_stack():
         # attempt to delete the mp3s which have failed to be deleted in cleanup
-        to_clean_up_cpy = to_clean_up.copy()
-        to_clean_up.clear()
+        with cleanup_lock:
+            to_clean_up_cpy = to_clean_up.copy()
+            to_clean_up.clear()
         for file_name in to_clean_up_cpy:
-            cleanup(file_name)
+            cleanup(file_name, lock_overide=True)
 
     def end_of_playing_cleanup(guild: Guild):
-        logger.warning("early leave cleanup of mp3 files")
-        while (current_mp3 := guild_states[guild].current_mp3) <= guild_states[guild].last_mp3:
+        #make sure you have guild_state.lock acquired when this function is ran
+        state = guild_states[guild]
+        while (current_mp3 := state.current_mp3) <= state.last_mp3:
             file_name = f"{guild.id}-{current_mp3}.mp3"
-            guild_states[guild].current_mp3 += 1
+            state.current_mp3 += 1
             cleanup(file_name)
-        guild_states[guild].current_mp3 = 0
-        guild_states[guild].last_mp3 = 0
+        state.current_mp3 = 0
+        state.last_mp3 = 0
+
         process_cleanup_stack()
 
     def play_next_mp3(guild: Guild, curr_vc: VoiceClient):
-        current_mp3 = guild_states[guild].current_mp3 = guild_states[guild].current_mp3 + 1
-        last_mp3 = guild_states[guild].last_mp3
+        guild_state = guild_states[guild]
+        do_cleanup = False
+        with guild_state.mp3_lock:
+            current_mp3 = guild_state.current_mp3 = guild_state.current_mp3 + 1
+            last_mp3 = guild_state.last_mp3
 
-        # if the prev_mp3 equals last_mp3 then all mp3s have been played
-        if current_mp3 > last_mp3:
-            logger.info("played last mp3")
-            end_of_playing_cleanup(guild)
+            # if the prev_mp3 equals last_mp3 then all mp3s have been played
+            if current_mp3 > last_mp3:
+                logger.info("played last mp3")
+                end_of_playing_cleanup(guild)
+                do_cleanup = True
+        if do_cleanup:
+            process_cleanup_stack()
             return
 
         # get the next mp3 to plays file name
@@ -331,7 +349,9 @@ def main():
             cleanup(file_name)
             if e:
                 logger.warning(f"Error when playing audio: {e}")
-                end_of_playing_cleanup(guild)
+                with guild_state.mp3_lock:
+                    end_of_playing_cleanup(guild)
+                process_cleanup_stack()
             else:
                 play_next_mp3(guild, curr_vc)
 
@@ -341,37 +361,42 @@ def main():
             curr_vc.play(discord.FFmpegPCMAudio(path, executable=FFMPEG_EXECUTABLE), after=finished_playing)
         except discord.ClientException:
             logger.warning("Error when playing audio: bot disconnected from the voice channel")
-            end_of_playing_cleanup(guild)
-        logger.debug(f"play_next_mp3: currMP3 = {guild_states[guild].current_mp3}, lastMP3 = {guild_states[guild].last_mp3}")
+            with guild_state.mp3_lock:
+                end_of_playing_cleanup(guild)
+            process_cleanup_stack()
+        logger.debug(f"play_next_mp3: currMP3 = {guild_state.current_mp3}, lastMP3 = {guild_state.last_mp3}")
 
     async def mimic(guild : Guild, messageable : Messageable, curr_vc : VoiceClient, text : str):
         if text == "":
             logger.debug("mimic: no text to mimic")
             return
 
-        # warning this has potential race conditions, but it doesn't seem likely to occur, so I haven't added locks yet
-        #####
-        if guild_states[guild].last_mp3 >= MAX_MP3_PER_SERVER:
+        guild_state = guild_states[guild]
+        guild_state.mp3_lock.acquire()
+        if guild_state.last_mp3 >= MAX_MP3_PER_SERVER:
             logger.info("mimic: reached maximum allowed amount of mp3s")
             response = f"This server is only allowed to queue {MAX_MP3_PER_SERVER} sentences. Wait till I stop speaking to add more."
+            guild_state.mp3_lock.release()
             await messageable.send(response)
             return
 
-        last_mp3 = guild_states[guild].last_mp3 = guild_states[guild].last_mp3 + 1
+        last_mp3 = guild_state.last_mp3 = guild_state.last_mp3 + 1
+        guild_state.mp3_lock.release()
 
         #makes the file name of the new mp3
         file_name = f"{guild.id}-{last_mp3}.mp3"
 
-        #as failed cleanups are expected to be rare, searching in the list should have minimal impact
-        if file_name in to_clean_up:
-            # if the file_name is marked to be deleted as we are overriding it we can unmark it
-            to_clean_up.remove(file_name)
+        with cleanup_lock:
+            #as failed cleanups are expected to be rare, searching in the list should have minimal impact
+            if file_name in to_clean_up:
+                # if the file_name is marked to be deleted as we are overriding it we can unmark it
+                to_clean_up.remove(file_name)
 
         path = f"{MP3DIR}{file_name}"
         #generate and save text-to-speech mp3
         tts_obj = gTTS(text=text, lang=LANGUAGE, slow=False)
         tts_obj.save(path)
-        #####
+
 
         # start playing if the bot isn't already
         if not curr_vc.is_playing():
