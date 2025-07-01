@@ -96,7 +96,7 @@ def main():
             logger.debug(f"{guild.name = } : {guild.id = }")
 
     @bot.event
-    async def on_error(event, message, *args, **kwargs):
+    async def on_error(event, *args, **kwargs):
         logger.warning(traceback.format_exc())
 
     @bot.command(name= "echo_toggle", help="The bot toggles echoing a member")
@@ -291,7 +291,7 @@ def main():
             return None
         return discord.utils.get(bot.voice_clients, channel=user_vs.channel)
 
-    def cleanup(file_name, lock_overide = False):
+    def cleanup(file_name):
         # try to delete a mp3
         path = f"{MP3DIR}{file_name}"
         try:
@@ -312,7 +312,7 @@ def main():
             to_clean_up_cpy = to_clean_up.copy()
             to_clean_up.clear()
         for file_name in to_clean_up_cpy:
-            cleanup(file_name, lock_overide=True)
+            cleanup(file_name)
 
     def end_of_playing_cleanup(guild: Guild):
         #make sure you have guild_state.lock acquired when this function is ran
