@@ -15,3 +15,4 @@ Finally when the user is done with the bot it will either leave it's voice chann
 + add other voice options
 + ~add auto leave when the __!join__ command is used~
 + ~add better logging of events~
++ setup sql database for userstate
