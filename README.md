@@ -17,3 +17,4 @@ Finally when the user is done with the bot it will either leave it's voice chann
 + ~add better logging of events~
 + setup sql database for userstate
 + remove the global cleanup stack and make it so each guild has their own to mimimise potential buffering time when the bot is being used in multple guilds
++ get a host for the bot
