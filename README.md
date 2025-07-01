@@ -9,10 +9,11 @@ Finally when the user is done with the bot it will either leave it's voice chann
 + ~add auto disconnect when alone in a voice channel~
 + ~add auto connect when a command to play a sound is run by a user in a voice channel~
 + ~change how user state is managed so each users state is independent from their state in another server~
-+ add locks to prevent race conditions
++ ~add locks to prevent race conditions~
 + ~setup docker image~
 + ~seperate the triggering of commands and the execution of commands into different functions~
 + add other voice options
 + ~add auto leave when the __!join__ command is used~
 + ~add better logging of events~
 + setup sql database for userstate
++ remove the global cleanup stack and make it so each guild has their own to mimimise potential buffering time when the bot is being used in multple guilds
