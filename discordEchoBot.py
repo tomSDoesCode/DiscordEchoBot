@@ -30,8 +30,6 @@ import time
 # https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html
 # https://pypi.org/project/replit-ffmpeg/
 
-
-
 @dataclass()
 class MemberState:
     # represents whether a member's messages should be echoed in text channel
@@ -148,7 +146,6 @@ async def mimic(guild_state : GuildState, messageable : Messageable, curr_vc : V
     with guild_state.mp3_lock:
         guild_state.mp3_queue.append(file_name)
 
-
     # start playing if the bot isn't already
     if not curr_vc.is_playing():
         play_next_mp3(curr_vc, guild_state)
@@ -198,7 +195,7 @@ async def join(channel: VoiceChannel, messageable: Messageable, bot : Bot):
     try:
         await channel.connect(timeout=5)
     except TimeoutError:
-        logger.error("timeout on the attempt to join voice channel")
+        logger.error(f"timeout on the attempt to join {channel.name}")
         response = f"I failed to join {channel.name}"
         await messageable.send(response)
     else:
@@ -208,233 +205,231 @@ async def leave(curr_vc: VoiceClient):
     await curr_vc.disconnect()
     logger.info("leave: successfully left voice channel")
 
-if __name__ == "__main__":
-    #Set up a basic logger
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(
-        format='[%(asctime)s] [%(levelname)-8s] %(message)s',
-        level=logging.DEBUG,
-        datefmt='%Y-%m-%d %H:%M:%S')
 
-    #load constants
-    load_dotenv()
-    TOKEN = os.getenv('DISCORD_TOKEN')
+#Set up a basic logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    format='[%(asctime)s] [%(levelname)-8s] %(message)s',
+    level=logging.DEBUG,
+    datefmt='%Y-%m-%d %H:%M:%S')
 
-    LANGUAGE = "en"
-    MAX_MP3_PER_SERVER = 100
-    MP3DIR = r"mp3s/"
+#load constants
+load_dotenv()
+TOKEN = os.getenv('DISCORD_TOKEN')
+LANGUAGE = "en"
+MAX_MP3_PER_SERVER = 100
+MP3DIR = r"mp3s/"
 
-    logger.debug(f"{sys.platform = }")
-    if sys.platform == "linux":
-        FFMPEG_EXECUTABLE = r"/bin/ffmpeg"
-        OPUS = r"/usr/lib/x86_64-linux-gnu/libopus.so.0"
-        discord.opus.load_opus(OPUS)
-    elif sys.platform == "win32":
-        FFMPEG_EXECUTABLE = os.getenv('FFMPEG_EXECUTABLE')
-    else:
-        logger.error("unsupported platform")
-        exit()
+#load os dependent constants
+logger.debug(f"{sys.platform = }")
+if sys.platform == "linux":
+    FFMPEG_EXECUTABLE = r"/bin/ffmpeg"
+    OPUS = r"/usr/lib/x86_64-linux-gnu/libopus.so.0"
+    discord.opus.load_opus(OPUS)
+elif sys.platform == "win32":
+    FFMPEG_EXECUTABLE = os.getenv('FFMPEG_EXECUTABLE')
+else:
+    logger.error("unsupported platform")
+    exit()
 
-def main():
-    # setup state dictionary
-    guild_states : defaultdict[Guild,GuildState] = defaultdict(GuildState)
 
-    command_prefix = "!"
+# setup state dictionary
+guild_states : defaultdict[Guild,GuildState] = defaultdict(GuildState)
 
-    intents : discord.Intents = discord.Intents.all()
-    bot: Bot = Bot(command_prefix=command_prefix, intents=intents)
+command_prefix = "!"
 
-    @bot.event
-    async def on_ready():
-        for guild in bot.guilds:
-            logger.debug(f"{guild.name = } : {guild.id = }")
+intents : discord.Intents = discord.Intents.all()
+bot: Bot = Bot(command_prefix=command_prefix, intents=intents)
 
-    @bot.event
-    async def on_error(event, *args, **kwargs):
-        logger.error(traceback.format_exc())
+@bot.event
+async def on_ready():
+    for guild in bot.guilds:
+        logger.debug(f"{guild.name = } : {guild.id = }")
 
-    @bot.event
-    async def on_voice_state_update(member : Member, before : VoiceState, after: VoiceState):
-        vc = get_current_voice_client(member.guild, bot)
-        if not vc:
-            return
-        logger.debug(f"{len(vc.channel.members) = }")
-        if len(vc.channel.members) == 1:
-            logger.debug(f"on_voice_state_update: leaving channel because it's alone")
-            await leave(vc)
+@bot.event
+async def on_error(event, *args, **kwargs):
+    logger.error(traceback.format_exc())
 
-    @bot.command(name= "echo_toggle", help="The bot toggles echoing a member")
-    async def echo_toggle_command(ctx: Context, member: Optional[Member]):
-        logger.info(f"echo_toggle command ran")
+@bot.event
+async def on_voice_state_update(member : Member, before : VoiceState, after: VoiceState):
+    vc = get_current_voice_client(member.guild, bot)
+    if not vc:
+        return
+    logger.debug(f"{len(vc.channel.members) = }")
+    if len(vc.channel.members) == 1:
+        logger.debug(f"on_voice_state_update: leaving channel because it's alone")
+        await leave(vc)
 
-        guild : Guild = ctx.guild
+@bot.command(name= "echo_toggle", help="The bot toggles echoing a member")
+async def echo_toggle_command(ctx: Context, member: Optional[Member]):
+    logger.info(f"echo_toggle command ran")
 
-        if member is None:
-            member = ctx.author
+    guild : Guild = ctx.guild
 
-        await echo_toggle(ctx, guild_states[guild], member)
-
-    @bot.command(name = "mimic_toggle", help="The bot toggles mimicking a member with text-to-speech")
-    async def mimic_toggle_command(ctx: Context, member: Optional[Member]):
-        logger.info(f"register command ran")
-        guild : Guild = ctx.guild
-
-        if member is None:
-            member = ctx.author
-
-        await mimic_toggle(ctx, guild_states[guild], member)
-        await auto_join(ctx, guild, member, bot)
-
-    @bot.command(name = "mimic_all", help = "Set the bot to mimic all users in this server")
-    async def mimic_all_command(ctx: Context):
-        logger.info(f"mimic_all command ran")
-        guild : Guild = ctx.guild
-
-        for member in guild.members:
-            if member != bot.user:
-                guild_states[guild].member_states[member].mimic_member = True
-        response = f"all members set to be mimicked"
-
-        await ctx.send(response)
-
+    if member is None:
         member = ctx.author
-        await auto_join(ctx, guild, member, bot)
 
-    @bot.command(name = "mimic_none", help = "Set the bot to mimic no users in this server")
-    async def mimic_none_command(ctx: Context):
-        logger.info(f"mimic_none command ran")
-        guild: Guild = ctx.guild
+    await echo_toggle(ctx, guild_states[guild], member)
 
-        for member in guild.members:
+@bot.command(name = "mimic_toggle", help="The bot toggles mimicking a member with text-to-speech")
+async def mimic_toggle_command(ctx: Context, member: Optional[Member]):
+    logger.info(f"register command ran")
+    guild : Guild = ctx.guild
+
+    if member is None:
+        member = ctx.author
+
+    await mimic_toggle(ctx, guild_states[guild], member)
+    await auto_join(ctx, guild, member, bot)
+
+@bot.command(name = "mimic_all", help = "Set the bot to mimic all users in this server")
+async def mimic_all_command(ctx: Context):
+    logger.info(f"mimic_all command ran")
+    guild : Guild = ctx.guild
+
+    for member in guild.members:
+        if member != bot.user:
+            guild_states[guild].member_states[member].mimic_member = True
+    response = f"all members set to be mimicked"
+
+    await ctx.send(response)
+
+    member = ctx.author
+    await auto_join(ctx, guild, member, bot)
+
+@bot.command(name = "mimic_none", help = "Set the bot to mimic no users in this server")
+async def mimic_none_command(ctx: Context):
+    logger.info(f"mimic_none command ran")
+    guild: Guild = ctx.guild
+
+    for member in guild.members:
+        guild_states[guild].member_states[member].mimic_member = False
+
+    response = f"all members set to not be mimicked"
+    await ctx.send(response)
+
+@bot.command(name = "mimic_role", help = "Set the bot to mimic members of a given role in this server")
+async def mimic_role_command(ctx: Context, role : discord.Role):
+    logger.info(f"mimic_role command ran")
+    guild: Guild = ctx.guild
+
+    for member in guild.members:
+        if role in member.roles and member != bot.user:
+            guild_states[guild].member_states[member].mimic_member = True
+
+    response = f"all members of role {role} set to be mimicked"
+    await ctx.send(response)
+
+    member = ctx.author
+    await auto_join(ctx, guild, member, bot)
+
+@bot.command(name = "stop_mimic_role", help = "Set the bot to not mimic members of a given role in this server")
+async def stop_mimic_role_command(ctx: Context, role : discord.Role):
+    logger.info(f"stop_mimic_role command ran")
+    guild: Guild = ctx.guild
+
+    for member in guild.members:
+        if role in member.roles:
             guild_states[guild].member_states[member].mimic_member = False
 
-        response = f"all members set to not be mimicked"
-        await ctx.send(response)
+    response = f"all members of role {role} set to not be mimicked"
+    await ctx.send(response)
 
-    @bot.command(name = "mimic_role", help = "Set the bot to mimic members of a given role in this server")
-    async def mimic_role_command(ctx: Context, role : discord.Role):
-        logger.info(f"mimic_role command ran")
-        guild: Guild = ctx.guild
+@bot.command(name = "echo", help="Echos the following words")
+async def echo_command(ctx: Context, *words : str):
+    logger.info(f"echo command ran")
+    await echo(ctx, " ".join(words))
 
-        for member in guild.members:
-            if role in member.roles and member != bot.user:
-                guild_states[guild].member_states[member].mimic_member = True
+def verify_voice_channel(channel : Optional[VoiceChannel | StageChannel], guild : Guild ):
+    #checks that a voice channel is in a guild and is not a stage channel
+    return isinstance(channel, VoiceChannel) and channel.guild == guild
 
-        response = f"all members of role {role} set to be mimicked"
-        await ctx.send(response)
+@bot.command(name = "join", help="Joins current channel or a specified channel")
+async def join_command(ctx: Context, channel: Optional[VoiceChannel]):
+    logger.info(f"join command ran")
+    guild : Optional[Guild] = ctx.guild
 
-        member = ctx.author
-        await auto_join(ctx, guild, member, bot)
-
-    @bot.command(name = "stop_mimic_role", help = "Set the bot to not mimic members of a given role in this server")
-    async def stop_mimic_role_command(ctx: Context, role : discord.Role):
-        logger.info(f"stop_mimic_role command ran")
-        guild: Guild = ctx.guild
-
-        for member in guild.members:
-            if role in member.roles:
-                guild_states[guild].member_states[member].mimic_member = False
-
-        response = f"all members of role {role} set to not be mimicked"
-        await ctx.send(response)
-
-    @bot.command(name = "echo", help="Echos the following words")
-    async def echo_command(ctx: Context, *words : str):
-        logger.info(f"echo command ran")
-        await echo(ctx, " ".join(words))
-
-    def verify_voice_channel(channel : Optional[VoiceChannel | StageChannel], guild : Guild ):
-        #checks that a voice channel is in a guild and is not a stage channel
-        return isinstance(channel, VoiceChannel) and channel.guild == guild
-
-    @bot.command(name = "join", help="Joins current channel or a specified channel")
-    async def join_command(ctx: Context, channel: Optional[VoiceChannel]):
-        logger.info(f"join command ran")
-        guild : Optional[Guild] = ctx.guild
-
-        # if the user didn't give a channel, try and get the channel they're in
-        if not channel:
-            voice: Optional[VoiceState] = ctx.author.voice
-            # check that the channel exists and is in the guild the user put the command in
-            if not voice or not (channel := voice.channel) or not verify_voice_channel(channel, guild):
-                logger.warning("join: There was no voice channel to join")
-                response = f"I failed to join the voice channel because you are not in one to join and you didn't provide one to join"
-                await ctx.send(response)
-                return
-
-        await join(channel, ctx, bot)
-
-    @bot.command(name = "mimic", help="Mimics the following sentence in text-to-speech")
-    async def mimic_command(ctx: Context, *words):
-        logger.info(f"mimic command ran")
-
-        guild: Guild = ctx.guild
-        member : Member = ctx.author
-
-        await auto_join(ctx, guild, member, bot)
-
-        #get voice client of the bot
-        curr_vc = get_current_voice_client(guild, bot)
-        if curr_vc is None:
-            logger.warning(f"mimic: bot not in a voice channel")
-            return
-        curr_vc : VoiceClient
-
-        text = " ".join(words)
-        await mimic(guild_states[guild], ctx, curr_vc, text)
-
-    @bot.command(name = "leave", help="Leave the channel its in")
-    async def leave_command(ctx: Context):
-        logger.info("leave command ran")
-
-        # get voice client of the bot
-        curr_vc = get_current_voice_client(ctx.guild, bot)
-        if not curr_vc:
-            logger.warning("leave: no voice connection")
-            response = f"I cant leave a voice channel im not in one"
+    # if the user didn't give a channel, try and get the channel they're in
+    if not channel:
+        voice: Optional[VoiceState] = ctx.author.voice
+        # check that the channel exists and is in the guild the user put the command in
+        if not voice or not (channel := voice.channel) or not verify_voice_channel(channel, guild):
+            logger.warning("join: There was no voice channel to join")
+            response = f"I failed to join the voice channel because you are not in one to join and you didn't provide one to join"
             await ctx.send(response)
             return
 
-        await leave(curr_vc)
+    await join(channel, ctx, bot)
 
-    @bot.listen()
-    async def on_message(message: Message):
-        if not message.guild:
-            return
-        guild: Guild = message.guild
+@bot.command(name = "mimic", help="Mimics the following sentence in text-to-speech")
+async def mimic_command(ctx: Context, *words):
+    logger.info(f"mimic command ran")
 
-        # checks that the message author is a member
-        if not isinstance(message.author, Member):
-            return
-        member: Member = message.author
+    guild: Guild = ctx.guild
+    member : Member = ctx.author
 
-        # checks if the message was from the bot so it can be ignored
-        if message.author == bot.user:
-            #logger.debug(f"on_message: message is from the bot")
-            return
+    await auto_join(ctx, guild, member, bot)
 
-        # check if the message is a command so it can be ignored by this function
-        if (m := message.content) and m[0: len(command_prefix)] == command_prefix:
-            #logger.debug(f"on_message: message is a command")
-            return
+    #get voice client of the bot
+    curr_vc = get_current_voice_client(guild, bot)
+    if curr_vc is None:
+        logger.warning(f"mimic: bot not in a voice channel")
+        return
+    curr_vc : VoiceClient
 
-        # if the channel isn't a text channel then we ignore the message
-        if not isinstance((channel := message.channel), TextChannel):
-            #logger.debug(f"on_message: message not in text channel")
-            return
-        channel: TextChannel
+    text = " ".join(words)
+    await mimic(guild_states[guild], ctx, curr_vc, text)
 
-        if guild_states[guild].member_states[member].mimic_member:
-            logger.debug(f"mimicking {message.content =}")
-            vc = get_current_voice_client(guild, bot)
-            if vc:
-                await mimic(guild_states[guild], channel, vc,  message.content)
+@bot.command(name = "leave", help="Leave the channel its in")
+async def leave_command(ctx: Context):
+    logger.info("leave command ran")
 
-        if guild_states[guild].member_states[member].echo_member:
-            logger.debug(f"echoing {message =}")
-            await echo(channel, message.content )
+    # get voice client of the bot
+    curr_vc = get_current_voice_client(ctx.guild, bot)
+    if not curr_vc:
+        logger.warning("leave: no voice connection")
+        response = f"I cant leave a voice channel im not in one"
+        await ctx.send(response)
+        return
 
-    bot.run(TOKEN)
+    await leave(curr_vc)
+
+@bot.listen()
+async def on_message(message: Message):
+    if not message.guild:
+        return
+    guild: Guild = message.guild
+
+    # checks that the message author is a member
+    if not isinstance(message.author, Member):
+        return
+    member: Member = message.author
+
+    # checks if the message was from the bot so it can be ignored
+    if message.author == bot.user:
+        #logger.debug(f"on_message: message is from the bot")
+        return
+
+    # check if the message is a command so it can be ignored by this function
+    if (m := message.content) and m[0: len(command_prefix)] == command_prefix:
+        #logger.debug(f"on_message: message is a command")
+        return
+
+    # if the channel isn't a text channel then we ignore the message
+    if not isinstance((channel := message.channel), TextChannel):
+        #logger.debug(f"on_message: message not in text channel")
+        return
+    channel: TextChannel
+
+    if guild_states[guild].member_states[member].mimic_member:
+        logger.debug(f"mimicking {message.content =}")
+        vc = get_current_voice_client(guild, bot)
+        if vc:
+            await mimic(guild_states[guild], channel, vc,  message.content)
+
+    if guild_states[guild].member_states[member].echo_member:
+        logger.debug(f"echoing {message =}")
+        await echo(channel, message.content )
 
 if __name__ == '__main__':
-    main()
+    bot.run(TOKEN)
