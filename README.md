@@ -19,3 +19,4 @@ Yoy can use the __!help__ command for the full list of commands.
 + setup sql database for userstate
 + remove the global cleanup stack and make it so each guild has their own to mimimise potential buffering time when the bot is being used in multple guilds
 + get a host for the bot
++ replace mp3 numbers with a queue
