@@ -30,9 +30,9 @@ RUN adduser \
 
 
 #install libopus and ffmpeg
-RUN apt-get update
-RUN apt-get install libopus0
-RUN apt-get install -y ffmpeg
+RUN apt-get update && \
+    apt-get install libopus0 && \
+    apt-get install -y ffmpeg
 
 FROM pythonffmpeg as base
 
@@ -57,9 +57,6 @@ run chmod +rwx discordEchoBot.py
 
 # Switch to the non-privileged user to run the application.
 #USER appuser
-
-# Expose the port that the application listens on.
-EXPOSE 8000
 
 # Run the application.
 CMD ["python3", "discordEchoBot.py"]

@@ -257,7 +257,7 @@ async def on_voice_state_update(member : Member, before : VoiceState, after: Voi
         return
     logger.debug(f"{len(vc.channel.members) = }")
     if len(vc.channel.members) == 1:
-        logger.debug(f"on_voice_state_update: leaving channel because it's alone")
+        logger.debug(f"on_voice_state_update: leaving channel because the bot is alone")
         await leave(vc)
 
 @bot.command(name= "echo_toggle", help="The bot toggles echoing a member")
@@ -432,4 +432,9 @@ async def on_message(message: Message):
         await echo(channel, message.content )
 
 if __name__ == '__main__':
+    #empty the mp3 directory
+    _, _, files = next(os.walk(MP3DIR), (None,None,[]) )
+    for file_name in files:
+        os.remove(f"{MP3DIR}{file_name}")
+    #start the bot
     bot.run(TOKEN)
