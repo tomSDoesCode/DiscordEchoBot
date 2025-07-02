@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from typing import Optional
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 import os
@@ -12,15 +12,15 @@ import discord
 from discord import VoiceClient, Message, TextChannel, Member, Guild, VoiceChannel, VoiceState, StageChannel
 from discord.abc import Messageable
 from discord.ext.commands import Context, Bot
-#import nacl #doesn't need to be imported but needs to be installed
 
 from gtts import gTTS
 
 import logging
-
 import traceback
 
 import threading
+
+import time
 
 #useful links
 # https://realpython.com/how-to-make-a-discord-bot-python/
@@ -30,8 +30,186 @@ import threading
 # https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html
 # https://pypi.org/project/replit-ffmpeg/
 
-def main():
-    # Set up a basic logger
+
+
+@dataclass()
+class MemberState:
+    # represents whether a member's messages should be echoed in text channel
+    echo_member : bool = False
+    # represents whether a member's messages should be echoed in voice channel via text-to-speech
+    mimic_member : bool = False
+
+@dataclass()
+class GuildState:
+    # dictionary of members states
+    member_states : defaultdict[Member, MemberState] = field(default_factory=lambda : defaultdict(MemberState))
+    #queue of the mp3s to be played in the guilds voice channel
+    mp3_queue : deque = field(default_factory=deque)
+    #lock to access mp3 queue
+    mp3_lock : threading.Lock = field(default_factory= threading.Lock)
+    #list of a mp3 file names of file which failed to be deleted,
+    # hence need to be deleted at a later point
+    cleanup_stack : list[str] = field(default_factory= list)
+    #lock to use the cleanup list
+    cleanup_lock : threading.Lock = field(default_factory= threading.Lock)
+
+#get the current voice client of the bot
+def get_current_voice_client(guild : Guild, bot: Bot) -> Optional[VoiceClient]:
+    return discord.utils.get(bot.voice_clients, guild=guild)
+
+#get the voice client of the bot if it's in the passed in voice states channel
+def get_shared_voice_client(user_vs: Optional[VoiceState], bot: Bot) -> Optional[VoiceClient]:
+    if user_vs is None:
+        return None
+    return discord.utils.get(bot.voice_clients, channel=user_vs.channel)
+
+def cleanup(file_name, guild_state : GuildState):
+    # try to delete a mp3
+    path = f"{MP3DIR}{file_name}"
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+            logger.info(f"File '{file_name}' deleted successfully.")
+        else:
+            logger.info(f"File '{file_name}' not found.")
+    except PermissionError:
+        # if you aren't allowed access to the file then note the file so it can be cleaned up later
+        logger.info(f"File '{file_name}' failed clean up")
+        with guild_state.cleanup_lock:
+            guild_state.cleanup_stack.append(file_name)
+
+def process_cleanup_stack(guild_state : GuildState):
+    # attempt to delete the mp3s which have failed to be deleted in cleanup
+    with guild_state.cleanup_lock:
+        to_clean_up_cpy = guild_state.cleanup_stack.copy()
+        guild_state.cleanup_stack.clear()
+    for file_name in to_clean_up_cpy:
+        cleanup(file_name, guild_state)
+
+def end_of_playing_cleanup(guild_state : GuildState):
+    #make sure you have guild_state.mp3_lock acquired when this function is ran
+    #this function marks all unused mp3s for deletion
+    while guild_state.mp3_queue:
+        file_name = guild_state.mp3_queue.popleft()
+        cleanup(file_name, guild_state)
+    process_cleanup_stack(guild_state)
+
+def play_next_mp3(curr_vc: VoiceClient, guild_state : GuildState):
+    with guild_state.mp3_lock:
+        # if the queue is empty then all mp3s have been played
+        if not guild_state.mp3_queue:
+            logger.info("played last mp3")
+            end_of_playing_cleanup(guild_state)
+        else:
+            # get the file name of the next mp3 to play
+            file_name = guild_state.mp3_queue.popleft()
+
+    def finished_playing(e : Optional[Exception]):
+        cleanup(file_name, guild_state)
+        if e:
+            logger.error(f"Error when playing audio: {e}")
+            with guild_state.mp3_lock:
+                end_of_playing_cleanup(guild_state)
+        else:
+            play_next_mp3(curr_vc, guild_state)
+
+    # attempt to play the audio
+    path = f"{MP3DIR}{file_name}"
+    try:
+        curr_vc.play(discord.FFmpegPCMAudio(path, executable=FFMPEG_EXECUTABLE), after=finished_playing)
+    except discord.ClientException:
+        logger.error("Error when playing audio: bot disconnected from the voice channel")
+        cleanup(file_name, guild_state)
+        with guild_state.mp3_lock:
+            end_of_playing_cleanup(guild_state)
+
+async def mimic(guild_state : GuildState, messageable : Messageable, curr_vc : VoiceClient, text : str):
+    if text == "":
+        logger.debug("mimic: no text to mimic")
+        return
+
+    guild_state.mp3_lock.acquire()
+    if len(guild_state.mp3_queue) >= MAX_MP3_PER_SERVER:
+        logger.info("mimic: reached maximum allowed amount of mp3s")
+        response = f"This server is only allowed to queue {MAX_MP3_PER_SERVER} sentences."
+        guild_state.mp3_lock.release()
+        await messageable.send(response)
+        return
+
+    #makes the file name of the new mp3
+    file_name = f"{time.time()}-{len(guild_state.mp3_queue)}.mp3"
+    guild_state.mp3_lock.release()
+
+    path = f"{MP3DIR}{file_name}"
+    #generate and save text-to-speech mp3
+    tts_obj = gTTS(text=text, lang=LANGUAGE, slow=False)
+    tts_obj.save(path)
+    #add the mp3 to the play queue
+    with guild_state.mp3_lock:
+        guild_state.mp3_queue.append(file_name)
+
+
+    # start playing if the bot isn't already
+    if not curr_vc.is_playing():
+        play_next_mp3(curr_vc, guild_state)
+
+async def auto_join(messageable : Messageable, guild : Guild, member : Member, bot : Bot):
+    # auto join vc if not already in one
+    await join_members_vc_if_none(guild, bot, member, messageable)
+    # tell the person who activated the command to join a vc with the bot if not already
+    if get_shared_voice_client(member.voice, bot) is None:
+        response = f"{member} is not in a vc with me. Join a vc with me to hear the registered user"
+        await messageable.send(response)
+
+async def echo_toggle(messageable : Messageable, guild_state : GuildState, member : Member):
+    # toggle the echo state and inform the user about it
+    echo_state = guild_state.member_states[member].echo_member = not guild_state.member_states[
+        member].echo_member
+    response = f"{member} has been {'' if echo_state else 'de'}registered to echo mode"
+    await messageable.send(response)
+
+async def mimic_toggle(messageable : Messageable, guild_state : GuildState, member : Member):
+    # invert mimic_state and inform the user about it
+    mimic_state = guild_state.member_states[member].mimic_member = not guild_state.member_states[
+        member].mimic_member
+    response = f"{member} has been {'' if mimic_state else 'de'}registered to mimic mode"
+    await messageable.send(response)
+
+async def echo(messageable: Messageable, text : str):
+    response = f"echo: {text}"
+    await messageable.send(response)
+
+async def join_members_vc_if_none(guild : Guild, bot : Bot, member : Member, messageable : Messageable):
+    if get_current_voice_client(guild, bot) is None and member.voice and isinstance(member.voice.channel, VoiceChannel):
+        await join(member.voice.channel, messageable, bot)
+
+async def join(channel: VoiceChannel, messageable: Messageable, bot : Bot):
+    #get the channel in this guild that the bot is in if its in one
+    curr_vc: Optional[VoiceClient] = get_current_voice_client(channel.guild, bot)
+
+    #if already in a vc, but not the one the user is in then we leave it so we can join their vc
+    if curr_vc is not None:
+        if curr_vc.channel == channel :
+            logger.info("already in the vc")
+            return
+        await leave(curr_vc)
+
+    # attempt to connect to the voice channel
+    try:
+        await channel.connect(timeout=5)
+    except TimeoutError:
+        logger.error("timeout on the attempt to join voice channel")
+        response = f"I failed to join {channel.name}"
+        await messageable.send(response)
+    else:
+        logger.info(f"joined {channel.name}")
+
+async def leave(curr_vc: VoiceClient):
+    await curr_vc.disconnect()
+    logger.info("leave: successfully left voice channel")
+
+if __name__ == "__main__":
+    #Set up a basic logger
     logger = logging.getLogger(__name__)
     logging.basicConfig(
         format='[%(asctime)s] [%(levelname)-8s] %(message)s',
@@ -55,35 +233,11 @@ def main():
         FFMPEG_EXECUTABLE = os.getenv('FFMPEG_EXECUTABLE')
     else:
         logger.error("unsupported platform")
-        return
+        exit()
 
-    @dataclass()
-    class MemberState:
-        # represents whether a member's messages should be echoed in text channel
-        echo_member : bool = False
-        # represents whether a member's messages should be echoed in voice channel via text-to-speech
-        mimic_member : bool = False
-
-    @dataclass()
-    class GuildState:
-        # dictionary of members states
-        member_states : defaultdict[Member, MemberState] = field(default_factory=lambda : defaultdict(MemberState))
-        #represents the currently playing mp3, 0 being no mp3 playing
-        current_mp3 : int = 0
-        #represents the last mp3 which needs to be played 0 being no mp3s need to be played
-        last_mp3 : int = 0
-        mp3_lock : threading.Lock = field(default_factory=lambda : threading.Lock())
-
-
+def main():
+    # setup state dictionary
     guild_states : defaultdict[Guild,GuildState] = defaultdict(GuildState)
-
-
-
-    #list of a mp3 file names of file which failed to be deleted,
-    # hence need to be deleted at a later point
-    to_clean_up = []
-    #lock to use the cleanup list
-    cleanup_lock: threading.Lock = threading.Lock()
 
     command_prefix = "!"
 
@@ -97,7 +251,17 @@ def main():
 
     @bot.event
     async def on_error(event, *args, **kwargs):
-        logger.warning(traceback.format_exc())
+        logger.error(traceback.format_exc())
+
+    @bot.event
+    async def on_voice_state_update(member : Member, before : VoiceState, after: VoiceState):
+        vc = get_current_voice_client(member.guild, bot)
+        if not vc:
+            return
+        logger.debug(f"{len(vc.channel.members) = }")
+        if len(vc.channel.members) == 1:
+            logger.debug(f"on_voice_state_update: leaving channel because it's alone")
+            await leave(vc)
 
     @bot.command(name= "echo_toggle", help="The bot toggles echoing a member")
     async def echo_toggle_command(ctx: Context, member: Optional[Member]):
@@ -108,7 +272,7 @@ def main():
         if member is None:
             member = ctx.author
 
-        await echo_toggle(ctx, guild, member)
+        await echo_toggle(ctx, guild_states[guild], member)
 
     @bot.command(name = "mimic_toggle", help="The bot toggles mimicking a member with text-to-speech")
     async def mimic_toggle_command(ctx: Context, member: Optional[Member]):
@@ -118,8 +282,8 @@ def main():
         if member is None:
             member = ctx.author
 
-        await mimic_toggle(ctx, guild, member)
-        await auto_join(ctx, guild, member)
+        await mimic_toggle(ctx, guild_states[guild], member)
+        await auto_join(ctx, guild, member, bot)
 
     @bot.command(name = "mimic_all", help = "Set the bot to mimic all users in this server")
     async def mimic_all_command(ctx: Context):
@@ -134,7 +298,7 @@ def main():
         await ctx.send(response)
 
         member = ctx.author
-        await auto_join(ctx, guild, member)
+        await auto_join(ctx, guild, member, bot)
 
     @bot.command(name = "mimic_none", help = "Set the bot to mimic no users in this server")
     async def mimic_none_command(ctx: Context):
@@ -160,7 +324,7 @@ def main():
         await ctx.send(response)
 
         member = ctx.author
-        await auto_join(ctx, guild, member)
+        await auto_join(ctx, guild, member, bot)
 
     @bot.command(name = "stop_mimic_role", help = "Set the bot to not mimic members of a given role in this server")
     async def stop_mimic_role_command(ctx: Context, role : discord.Role):
@@ -198,7 +362,7 @@ def main():
                 await ctx.send(response)
                 return
 
-        await join(channel, ctx)
+        await join(channel, ctx, bot)
 
     @bot.command(name = "mimic", help="Mimics the following sentence in text-to-speech")
     async def mimic_command(ctx: Context, *words):
@@ -207,7 +371,7 @@ def main():
         guild: Guild = ctx.guild
         member : Member = ctx.author
 
-        await auto_join(ctx, guild, member)
+        await auto_join(ctx, guild, member, bot)
 
         #get voice client of the bot
         curr_vc = get_current_voice_client(guild, bot)
@@ -217,7 +381,7 @@ def main():
         curr_vc : VoiceClient
 
         text = " ".join(words)
-        await mimic(guild, ctx, curr_vc, text)
+        await mimic(guild_states[guild], ctx, curr_vc, text)
 
     @bot.command(name = "leave", help="Leave the channel its in")
     async def leave_command(ctx: Context):
@@ -264,198 +428,11 @@ def main():
             logger.debug(f"mimicking {message.content =}")
             vc = get_current_voice_client(guild, bot)
             if vc:
-                await mimic(guild, channel, vc,  message.content)
+                await mimic(guild_states[guild], channel, vc,  message.content)
 
         if guild_states[guild].member_states[member].echo_member:
             logger.debug(f"echoing {message =}")
             await echo(channel, message.content )
-
-    @bot.event
-    async def on_voice_state_update(member : Member, before : VoiceState, after: VoiceState):
-        vc = get_current_voice_client(member.guild, bot)
-        if not vc:
-            return
-
-        if len(vc.channel.members) == 1:
-            logger.debug(f"on_voice_state_update: leaving channel because it's alone")
-            await leave(vc)
-
-
-    #get the current voice client of the bot
-    def get_current_voice_client(guild : Guild, bot: Bot) -> Optional[VoiceClient]:
-        return discord.utils.get(bot.voice_clients, guild=guild)
-
-    #get the voice client of the bot if it's in the passed in voice states channel
-    def get_shared_voice_client(user_vs: Optional[VoiceState], bot: Bot) -> Optional[VoiceClient]:
-        if user_vs is None:
-            return None
-        return discord.utils.get(bot.voice_clients, channel=user_vs.channel)
-
-    def cleanup(file_name):
-        # try to delete a mp3
-        path = f"{MP3DIR}{file_name}"
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-                logger.info(f"File '{file_name}' deleted successfully.")
-            else:
-                logger.info(f"File '{file_name}' not found.")
-        except PermissionError:
-            # if you aren't allowed access to the file then note the file so it can be cleaned up later
-            logger.info(f"File '{file_name}' failed clean up")
-            with cleanup_lock:
-                to_clean_up.append(file_name)
-
-    def process_cleanup_stack():
-        # attempt to delete the mp3s which have failed to be deleted in cleanup
-        with cleanup_lock:
-            to_clean_up_cpy = to_clean_up.copy()
-            to_clean_up.clear()
-        for file_name in to_clean_up_cpy:
-            cleanup(file_name)
-
-    def end_of_playing_cleanup(guild: Guild):
-        #make sure you have guild_state.lock acquired when this function is ran
-        state = guild_states[guild]
-        while (current_mp3 := state.current_mp3) <= state.last_mp3:
-            file_name = f"{guild.id}-{current_mp3}.mp3"
-            state.current_mp3 += 1
-            cleanup(file_name)
-        state.current_mp3 = 0
-        state.last_mp3 = 0
-
-        process_cleanup_stack()
-
-    def play_next_mp3(guild: Guild, curr_vc: VoiceClient):
-        guild_state = guild_states[guild]
-        do_cleanup = False
-        with guild_state.mp3_lock:
-            current_mp3 = guild_state.current_mp3 = guild_state.current_mp3 + 1
-            last_mp3 = guild_state.last_mp3
-
-            # if the prev_mp3 equals last_mp3 then all mp3s have been played
-            if current_mp3 > last_mp3:
-                logger.info("played last mp3")
-                end_of_playing_cleanup(guild)
-                do_cleanup = True
-        if do_cleanup:
-            process_cleanup_stack()
-            return
-
-        # get the next mp3 to plays file name
-        file_name = f"{guild.id}-{current_mp3}.mp3"
-
-        def finished_playing(e : Optional[Exception]):
-            cleanup(file_name)
-            if e:
-                logger.warning(f"Error when playing audio: {e}")
-                with guild_state.mp3_lock:
-                    end_of_playing_cleanup(guild)
-                process_cleanup_stack()
-            else:
-                play_next_mp3(guild, curr_vc)
-
-        # attempt to play the audio
-        path = f"{MP3DIR}{file_name}"
-        try:
-            curr_vc.play(discord.FFmpegPCMAudio(path, executable=FFMPEG_EXECUTABLE), after=finished_playing)
-        except discord.ClientException:
-            logger.warning("Error when playing audio: bot disconnected from the voice channel")
-            with guild_state.mp3_lock:
-                end_of_playing_cleanup(guild)
-            process_cleanup_stack()
-        logger.debug(f"play_next_mp3: currMP3 = {guild_state.current_mp3}, lastMP3 = {guild_state.last_mp3}")
-
-    async def mimic(guild : Guild, messageable : Messageable, curr_vc : VoiceClient, text : str):
-        if text == "":
-            logger.debug("mimic: no text to mimic")
-            return
-
-        guild_state = guild_states[guild]
-        guild_state.mp3_lock.acquire()
-        if guild_state.last_mp3 >= MAX_MP3_PER_SERVER:
-            logger.info("mimic: reached maximum allowed amount of mp3s")
-            response = f"This server is only allowed to queue {MAX_MP3_PER_SERVER} sentences. Wait till I stop speaking to add more."
-            guild_state.mp3_lock.release()
-            await messageable.send(response)
-            return
-
-        last_mp3 = guild_state.last_mp3 = guild_state.last_mp3 + 1
-        guild_state.mp3_lock.release()
-
-        #makes the file name of the new mp3
-        file_name = f"{guild.id}-{last_mp3}.mp3"
-
-        with cleanup_lock:
-            #as failed cleanups are expected to be rare, searching in the list should have minimal impact
-            if file_name in to_clean_up:
-                # if the file_name is marked to be deleted as we are overriding it we can unmark it
-                to_clean_up.remove(file_name)
-
-        path = f"{MP3DIR}{file_name}"
-        #generate and save text-to-speech mp3
-        tts_obj = gTTS(text=text, lang=LANGUAGE, slow=False)
-        tts_obj.save(path)
-
-
-        # start playing if the bot isn't already
-        if not curr_vc.is_playing():
-            play_next_mp3(guild, curr_vc)
-
-    async def auto_join(messageable : Messageable, guild : Guild, member : Member):
-        # auto join vc if not already in one
-        await join_members_vc_if_none(guild, bot, member, messageable)
-        # tell the person who activated the command to join a vc with the bot if not already
-        if get_shared_voice_client(member.voice, bot) is None:
-            response = f"{member} is not in a vc with me. Join a vc with me to hear the registered user"
-            await messageable.send(response)
-
-    async def echo_toggle(messageable : Messageable, guild : Guild, member : Member):
-        # toggle the echo state and inform the user about it
-        echo_state = guild_states[guild].member_states[member].echo_member = not guild_states[guild].member_states[
-            member].echo_member
-        response = f"{member} has been {'' if echo_state else 'de'}registered to echo mode"
-        await messageable.send(response)
-
-    async def mimic_toggle(messageable : Messageable, guild : Guild, member : Member):
-        # invert mimic_state and inform the user about it
-        mimic_state = guild_states[guild].member_states[member].mimic_member = not guild_states[guild].member_states[
-            member].mimic_member
-        response = f"{member} has been {'' if mimic_state else 'de'}registered to mimic mode"
-        await messageable.send(response)
-
-    async def echo(messageable: Messageable, text : str):
-        response = f"echo: {text}"
-        await messageable.send(response)
-
-    async def join_members_vc_if_none(guild : Guild, bot : Bot, member : Member, messageable : Messageable):
-        if get_current_voice_client(guild, bot) is None and member.voice and isinstance(member.voice.channel, VoiceChannel):
-            await join(member.voice.channel, messageable)
-
-    async def join(channel: VoiceChannel, messageable: Messageable):
-        #get the channel in this guild that the bot is in if its in one
-        curr_vc: Optional[VoiceClient] = get_current_voice_client(channel.guild, bot)
-
-        #if already in a vc, but not the one the user is in then we leave it so we can join their vc
-        if curr_vc is not None:
-            if curr_vc.channel == channel :
-                logger.info("already in the vc")
-                return
-            await leave(curr_vc)
-
-        # attempt to connect to the voice channel
-        try:
-            await channel.connect(timeout=5)
-        except TimeoutError:
-            logger.warning("timeout on the attempt to join voice channel")
-            response = f"I failed to join {channel.name}"
-            await messageable.send(response)
-        else:
-            logger.info(f"joined {channel.name}")
-
-    async def leave(curr_vc: VoiceClient):
-        await curr_vc.disconnect()
-        logger.info("leave: successfully left voice channel")
 
     bot.run(TOKEN)
 
