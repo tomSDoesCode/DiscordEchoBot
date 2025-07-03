@@ -98,6 +98,7 @@ def play_next_mp3(curr_vc: VoiceClient, guild_state : GuildState):
         if not guild_state.mp3_queue:
             logger.info("played last mp3")
             end_of_playing_cleanup(guild_state)
+            return
         else:
             # get the file name of the next mp3 to play
             file_name = guild_state.mp3_queue.popleft()
